@@ -81,7 +81,7 @@
     nameToken: 0,
     lastResolveUrl: '',
     subView: (() => {
-      try { return localStorage.getItem('qbrss-subview') === 'grid' ? 'grid' : 'list'; } catch { return 'list'; }
+      try { return (localStorage.getItem('anirss-subview') || localStorage.getItem('qbrss-subview')) === 'grid' ? 'grid' : 'list'; } catch { return 'list'; }
     })(),
     searchResult: null,
     searchLoading: false,
@@ -352,7 +352,7 @@
     const next = theme === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', next);
     if (persist) {
-      try { localStorage.setItem('qbrss-theme', next); } catch { /* ignore */ }
+      try { localStorage.setItem('anirss-theme', next); } catch { /* ignore */ }
     }
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', next === 'light' ? '#f4f7fb' : '#070b11');
@@ -518,7 +518,7 @@
       <div class="empty" style="margin-top:60px">
         <div class="empty-icon">${icon('alert', 30)}</div>
         <h3>应用服务不可用</h3>
-        <p>${esc(S.loadError || '无法加载数据')}<br>请确认 qbrss 服务进程仍在运行，然后重试。</p>
+        <p>${esc(S.loadError || '无法加载数据')}<br>请确认 anirss 服务进程仍在运行，然后重试。</p>
         <div class="empty-actions"><button class="btn btn-primary" data-action="refresh">${icon('refresh')}重新加载</button></div>
       </div>`;
   }
@@ -1776,7 +1776,11 @@
                 <div class="card-title">数据与日志</div>
                 <div class="card-sub">配置保存在应用私有数据目录</div>
               </div>
-              <a class="btn btn-sm" href="${API}export">${icon('download')}导出配置</a>
+              <div class="row-actions">
+                <a class="btn btn-sm" href="${API}export">${icon('download')}导出配置</a>
+                <button class="btn btn-sm btn-ghost" type="button" data-action="import-config">${icon('upload')}导入配置</button>
+                <input type="file" id="import-file" accept="application/json,.json" class="hidden">
+              </div>
             </div>
             <div class="card-body" style="padding-top:12px">
               <div class="kv-row"><span>数据目录</span><span>${esc(d.app.dataDir || '—')}</span></div>
@@ -1895,6 +1899,35 @@
 
   async function runProxyTest(body, btn) {
     await withBusy(btn, () => performProxyTest(body));
+  }
+
+  async function importConfigFile(input) {
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return;
+    let payload;
+    try {
+      payload = JSON.parse(await file.text());
+    } catch (e) {
+      toast('不是有效的 JSON 文件：' + e.message, 'error');
+      return;
+    }
+    const ok = await askConfirm({
+      title: '导入配置',
+      message: `会用「${file.name}」里的内容覆盖当前的站点、存储路径、追番和补番记录（${S.data.subs.length} 个追番 → 导入文件的条数）。\nqBittorrent 与代理的密码不会从文件读取，导入后需要重新填写。建议先导出当前的配置作为备份。`,
+      confirmText: '覆盖导入',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await api('import', { method: 'POST', body: payload });
+      const t = r.totals || {};
+      toast(`已导入：站点 ${t.bases || 0}、路径 ${t.paths || 0}、追番 ${t.subs || 0}、补番 ${t.extras || 0}`, 'success', '导入完成');
+      await refresh();
+      await loadQbStatus(true);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   }
 
   async function saveProxySettings(btn) {
@@ -2112,7 +2145,7 @@
         break;
       case 'sub-view': {
         S.subView = el.dataset.view === 'grid' ? 'grid' : 'list';
-        try { localStorage.setItem('qbrss-subview', S.subView); } catch { /* ignore */ }
+        try { localStorage.setItem('anirss-subview', S.subView); } catch { /* ignore */ }
         renderView();
         break;
       }
@@ -2281,8 +2314,7 @@
           await refresh();
         });
         break;
-      case 'allow-redownload':
-        await withBusy(el, async () => {
+      case 'allow-redownload':        await withBusy(el, async () => {
           try {
             await api(`downloads/${encodeURIComponent(id)}/allow-redownload`, { method: 'POST', body: {} });
             toast('已允许重新下载该条目（下次检查会重新提交）', 'success');
@@ -2293,6 +2325,11 @@
           }
         });
         break;
+      case 'import-config': {
+        const input = $('#import-file');
+        if (input) input.click();
+        break;
+      }
       case 'clear-downloads': {
         const ok = await askConfirm({
           title: '清空下载记录',
@@ -3405,6 +3442,10 @@
 
   document.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.id === 'import-file') {
+      importConfigFile(t);
+      return;
+    }
     if (t.closest('#conn-form')) S.formDirty = true;
     if (t.closest('#proxy-form')) S.formDirty = true;
     if (t.id === 'f-base') updateSubUrlPreview();

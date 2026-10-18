@@ -2,10 +2,10 @@
 
 const crypto = require('crypto');
 
-const APP_NAME = 'qbrss';
-const APP_VERSION = '1.6.4';
+const APP_NAME = 'anirss';
+const APP_VERSION = '1.7.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 qbrss/' + APP_VERSION;
+  '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 anirss/' + APP_VERSION;
 
 function uid(prefix) {
   return (prefix || '') + crypto.randomBytes(6).toString('hex');

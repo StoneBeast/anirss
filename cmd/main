@@ -1,20 +1,20 @@
 #!/bin/bash
-# qbrss 生命周期：start | stop | status
+# anirss 生命周期：start | stop | status
 #
 # 服务通过 Unix Socket（$TRIM_APPDEST/app.sock）暴露 HTTP，
-# 由 fnOS 统一网关 /app/qbrss 反向代理，复用 NAS 登录态。
+# 由 fnOS 统一网关 /app/anirss 反向代理，复用 NAS 登录态。
 
 set -u
 
-APP="${TRIM_APPDEST:-/var/apps/qbrss/target}"
-VAR="${TRIM_PKGVAR:-/var/apps/qbrss/var}"
+APP="${TRIM_APPDEST:-/var/apps/anirss/target}"
+VAR="${TRIM_PKGVAR:-/var/apps/anirss/var}"
 SOCK="$APP/app.sock"
 PIDF="$VAR/app.pid"
 LOG="$VAR/app.log"
 SERVER="$APP/server/index.js"
 
 export PATH=/var/apps/nodejs_v24/target/bin:$PATH
-export QBRSS_PORT="${QBRSS_PORT:-${TRIM_SERVICE_PORT:-18181}}"
+export ANIRSS_PORT="${ANIRSS_PORT:-${QBRSS_PORT:-${TRIM_SERVICE_PORT:-18181}}}"
 umask 027
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >>"$LOG" 2>/dev/null; }
@@ -72,10 +72,10 @@ do_start() {
     echo $! >"$PIDF"
 
     local i
-    if [ "${QBRSS_PORT}" != "0" ] && command -v curl >/dev/null 2>&1; then
+    if [ "${ANIRSS_PORT}" != "0" ] && command -v curl >/dev/null 2>&1; then
         # fnOS 桌面入口使用独立端口，优先确认 HTTP 服务真的可访问
         for i in $(seq 1 80); do
-            if curl -fsS "http://127.0.0.1:${QBRSS_PORT}/api/health" >/dev/null 2>&1; then
+            if curl -fsS "http://127.0.0.1:${ANIRSS_PORT}/api/health" >/dev/null 2>&1; then
                 return 0
             fi
             sleep 0.25
@@ -87,7 +87,7 @@ do_start() {
         done
     fi
 
-    fail "qB RSS 订阅启动失败：服务未能在预期时间内监听端口 ${QBRSS_PORT} 或创建 Socket。"
+    fail "AniRSS 追番台启动失败：服务未能在预期时间内监听端口 ${ANIRSS_PORT} 或创建 Socket。"
 }
 
 do_stop() {

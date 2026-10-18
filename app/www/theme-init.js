@@ -1,6 +1,6 @@
 (function () {
   try {
-    var saved = localStorage.getItem('qbrss-theme');
+    var saved = localStorage.getItem('anirss-theme') || localStorage.getItem('qbrss-theme');
     var theme = saved === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
     var meta = document.querySelector('meta[name="theme-color"]');

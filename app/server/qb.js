@@ -245,7 +245,7 @@ class QBClient {
     let body;
     let contentType;
     if (options.buffer) {
-      const boundary = '----qbrss' + crypto.randomBytes(10).toString('hex');
+      const boundary = '----anirss' + crypto.randomBytes(10).toString('hex');
       const parts = [];
       for (const [key, value] of Object.entries(fields)) {
         parts.push(Buffer.from(

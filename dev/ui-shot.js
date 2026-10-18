@@ -2,7 +2,7 @@
 
 /**
  * 通过 Chrome DevTools Protocol 截图 + 做基础交互验收。
- * 前提：Chrome 以 --remote-debugging-port=9222 运行，qbrss 演示实例在 8777。
+ * 前提：Chrome 以 --remote-debugging-port=9222 运行，anirss 演示实例在 8777。
  */
 
 const fs = require('fs');

@@ -1,8 +1,13 @@
-# qB RSS 追番
+# AniRSS · 追番台
 
-一个**零 npm 依赖**的本地 Web 应用：把「站点基础地址 + 追番路径」拼成 RSS 地址，用正则筛选标题，自动提交到 qBittorrent，并按预设、模板或现场填写的存储路径归档。
+> **Ani**me + **RSS**：把 RSS 追番变成自动下载。零 npm 依赖的自托管 Web 应用——按「站点基础地址 + 追番路径」拼出 RSS，用正则筛选标题，自动提交到 qBittorrent，并按预设、模板或现场填写的路径归档；另有站点搜索快速追番、集数识别、磁力/种子单次补番。
 
-默认**浅色主题**，可切换深色；可独立运行，也可打包成 fnOS（飞牛）应用，在浏览器中通过独立端口打开。
+![version](https://img.shields.io/badge/version-1.7.0-2f81f7)
+![node](https://img.shields.io/badge/node-%E2%89%A518-3c873a)
+![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
+![platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-6f42c1)
+
+默认**浅色主题**，可切换深色；可独立运行，也可打包成 fnOS（飞牛）应用，在浏览器中通过独立端口打开。仓库：<https://github.com/StoneBeast/anirss>
 
 ![总览](docs/overview.png)
 
@@ -53,25 +58,25 @@
 
 ### 方式一：fnOS（飞牛）应用
 
-安装包：`dist/qbrss-1.6.4.fpk`。
+安装包：`dist/anirss-1.7.0.fpk`。
 
 1. 在 fnOS 应用中心开启「手动安装」（如未开启）。
-2. 安装 `qbrss-1.6.4.fpk`；应用依赖 `nodejs_v24`，应用中心会处理。
-3. 点击桌面上的「qB RSS 追番」，系统浏览器会打开 `http://<NAS-IP>:18181/`。
+2. 安装 `anirss-1.7.0.fpk`；应用依赖 `nodejs_v24`，应用中心会处理。
+3. 点击桌面上的「AniRSS 追番台」，系统浏览器会打开 `http://<NAS-IP>:18181/`。
 4. 进入「连接设置」，填写 qBittorrent WebUI 地址并测试连接。
 5. 进入「追番」，选择 Mikan 站点、填写路径和正则，保存即可。
 
 命令行安装：
 
 ```bash
-appcenter-cli install-fpk qbrss-1.6.4.fpk
+appcenter-cli install-fpk anirss-1.7.0.fpk
 ```
 
 首次打开会看到三步引导：
 
 ![首次打开](docs/onboarding.png)
 
-数据目录：`$TRIM_PKGVAR/config.json`，通常是 `/vol1/@appdata/qbrss/config.json`。卸载时默认保留数据，可在卸载向导里选择删除。
+数据目录：`$TRIM_PKGVAR/config.json`，通常是 `/vol1/@appdata/anirss/config.json`。卸载时默认保留数据，可在卸载向导里选择删除。
 
 > 应用入口默认仅管理员可见（`allUsers: false`）。独立端口本身**不经过 fnOS 登录态**，安全注意事项见下文。
 
@@ -93,14 +98,40 @@ bash start.sh
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `QBRSS_PORT` | `8777`（独立运行）/ `18181`（fnOS） | 监听端口；设为 `0` 可关闭 TCP |
-| `QBRSS_HOST` | `127.0.0.1`（独立）/ `0.0.0.0`（fnOS） | 监听地址。改成 `0.0.0.0` 前请阅读「安全」 |
-| `QBRSS_DATA` | `./data` | 配置与历史数据目录 |
-| `QBRSS_SOCKET` | 空 | Unix Socket 路径；单独设置时仅监听 Socket，同时设置 `QBRSS_PORT` 可同时开 TCP |
+| `ANIRSS_PORT` | `8777`（独立运行）/ `18181`（fnOS） | 监听端口；设为 `0` 可关闭 TCP |
+| `ANIRSS_HOST` | `127.0.0.1`（独立）/ `0.0.0.0`（fnOS） | 监听地址。改成 `0.0.0.0` 前请阅读「安全」 |
+| `ANIRSS_DATA` | `./data` | 配置与历史数据目录 |
+| `ANIRSS_SOCKET` | 空 | Unix Socket 路径；单独设置时仅监听 Socket，同时设置 `ANIRSS_PORT` 可同时开 TCP |
+
+旧版的 `QBRSS_PORT` / `QBRSS_HOST` / `QBRSS_DATA` / `QBRSS_SOCKET` 仍然兼容（1.7.0 起 `ANIRSS_*` 优先），老脚本不用改也能跑。
 
 ```bash
-QBRSS_DATA=./data QBRSS_PORT=8777 node app/server/index.js
+ANIRSS_DATA=./data ANIRSS_PORT=8777 node app/server/index.js
 ```
+
+### 从旧版（qB RSS 追番 / qbrss）升级到 1.7.0
+
+1.7.0 起项目更名为 **AniRSS**，fnOS 应用 id 也从 `qbrss` 改成 `anirss`——对 fnOS 来说这是一个**新应用**，目录、图标、数据目录都是新的：
+
+| | 旧版 1.6.x | 新版 1.7.0 |
+| --- | --- | --- |
+| 应用 id / 目录 | `qbrss`、`/var/apps/qbrss` | `anirss`、`/var/apps/anirss` |
+| 环境变量 | `QBRSS_PORT` / `QBRSS_DATA` / `QBRSS_HOST` / `QBRSS_SOCKET` | `ANIRSS_*`（旧名仍兼容） |
+| 项目文件夹 | `qbrss/` | `anirss/` |
+| 端口、界面、数据格式 | 18181 / —— | 不变，**配置格式完全兼容** |
+
+升级建议按这个顺序：
+
+1. **先备份**：旧应用「连接设置 → 导出配置」下载一份 JSON，或者直接复制旧数据目录 `/var/apps/qbrss/var/config.json`。
+2. **停掉旧应用**（它还占着 18181 端口），然后安装 `anirss-1.7.0.fpk`。
+3. **自动迁移**：新版首次启动时，如果新数据目录里还没有 `config.json`，会自动尝试从这些位置复制：
+   - `$QBRSS_DATA`（如果环境里还留着）
+   - `/var/apps/qbrss/var`
+   - 旧项目旁的 `qbrss/data`
+
+   成功时日志里会出现「已从旧数据目录迁移」。如果旧应用已被卸载、旧目录也删掉了，就走第 4 步。
+4. **手动导入**：把第 1 步的 JSON 在新应用「连接设置 → 导入配置」里导入。站点、路径预设、追番、补番记录会覆盖式导入；**qBittorrent 与代理的密码不会随文件导入**，需要重新填写一次。
+5. 确认追番、路径、下载记录都正常后，再在 fnOS 里卸载旧应用。旧版卸载默认保留数据，两者可以并存一段时间（注意只有一个能占用 18181 端口）。
 
 ## 使用流程
 
@@ -382,7 +413,7 @@ QBRSS_DATA=./data QBRSS_PORT=8777 node app/server/index.js
 ### 数据位置
 
 - fnOS：`$TRIM_PKGVAR/config.json`
-- 独立运行：`$QBRSS_DATA/config.json`，默认 `./data/config.json`
+- 独立运行：`$ANIRSS_DATA/config.json`，默认 `./data/config.json`
 
 `config.json` 包含追番、已见记录、下载历史、站点/路径预设和 qBittorrent 连接信息。文件以 `0600` 写入（Linux）。
 
@@ -393,6 +424,7 @@ QBRSS_DATA=./data QBRSS_PORT=8777 node app/server/index.js
 - 若要从公网访问，请在前面加带认证的反向代理（HTTPS），不要直接暴露 18181。
 - qBittorrent 密码和代理密码都以明文保存在本机配置文件中，请保护数据目录。
 - 「导出配置」不包含 qBittorrent 与代理密码；导出的 JSON 仍包含追番、路径和番组信息，请妥善保管。
+- 「导入配置」是覆盖式的（站点 / 路径 / 追番 / 补番会被文件内容替换），导入前建议先导出当前配置；密码永远不从文件读取。
 - 写接口会拒绝浏览器发起的跨站写请求（`Sec-Fetch-Site: cross-site`），降低 localhost CSRF 风险。
 - 所有 RSS 标题、链接和错误信息在渲染前都会 HTML 转义；外部链接使用 `noopener`。
 - 建议为 qBittorrent 单独设置一个权限受限的 WebUI 账号，不要在公网直接暴露 qB WebUI。
@@ -403,7 +435,7 @@ QBRSS_DATA=./data QBRSS_PORT=8777 node app/server/index.js
 
 1. `manifest` 的 `service_port`
 2. `app/ui/config` 的 `port`
-3. `cmd/main` 中 `QBRSS_PORT` 的兜底值（或设置环境变量）
+3. `cmd/main` 中 `ANIRSS_PORT` 的兜底值（或设置环境变量）
 
 ### 多用户
 
@@ -421,7 +453,7 @@ fnOS 入口默认仅管理员可见（`app/ui/config` 中 `allUsers: false`）�
 ：常见原因是同一种子已存在、分类不存在或保存路径不可写。应用会把它记为失败，可在下载记录查看错误。
 
 **点击 fnOS 图标浏览器打不开**
-：确认 NAS 的 18181 端口未被防火墙拦截；如果端口被其他程序占用，应用会启动失败，查看 `/var/apps/qbrss/var/app.log` 并修改端口。
+：确认 NAS 的 18181 端口未被防火墙拦截；如果端口被其他程序占用，应用会启动失败，查看 `/var/apps/anirss/var/app.log` 并修改端口。
 
 **获取种子失败，但 qB 能下**
 ：应用会先尝试自己下载 `.torrent`，失败时自动改为把 URL 交给 qBittorrent 直接抓取。若两者都失败，检查 qB 的网络、代理和站点防盗链。
@@ -430,7 +462,7 @@ fnOS 入口默认仅管理员可见（`app/ui/config` 中 `allUsers: false`）�
 ：检查预设路径中是否包含 `${1}`、`${{1}}` 或 `${{}}`；只有 `${name}` 时不会出现变量输入框，但会自动使用追番名称。编辑预设后重新在追番表单中套用。
 
 **fnOS 应用启动失败**
-：查看 `/var/apps/qbrss/var/app.log`；确认 `nodejs_v24` 依赖已安装、18181 端口空闲。也可以在应用中心停止后重新启动。
+：查看 `/var/apps/anirss/var/app.log`；确认 `nodejs_v24` 依赖已安装、18181 端口空闲。也可以在应用中心停止后重新启动。
 
 ## 开发与测试
 
@@ -447,14 +479,14 @@ node dev/smoke.js
 npm test
 ```
 
-烟测会占用 `8788`、`18080`、`18081` 端口，并在 `work/qbrss-smoke-data` 生成临时数据。
+烟测会占用 `8788`、`18080`、`18081` 端口，并在 `work/anirss-smoke-data` 生成临时数据。
 
 ### 本地演示数据
 
 ```bash
 node dev/demo.js
 # 另开终端：
-QBRSS_DATA=../work/qbrss-demo-data QBRSS_PORT=8777 node app/server/index.js
+ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
 ```
 
 演示数据包含假 qBittorrent、假 RSS、4 个追番、4 条补番记录、5 个路径预设（含 `/vol2/1000/media/动画/${{1}}/Season ${{}}` 和 `${name}` 模板）和 6 条下载记录；假 RSS 还提供搜索接口、单集页和番组主页，方便调试「搜索番剧」。`dev/demo.js` 只用于开发演示，不会进入 FPK。
@@ -463,8 +495,8 @@ QBRSS_DATA=../work/qbrss-demo-data QBRSS_PORT=8777 node app/server/index.js
 
 ```powershell
 $env:TMP="D:\workspace\fnos\work\tmp"
-D:\workspace\fnos\tools\fnpack.exe build -d D:\workspace\fnos\qbrss
-python qbrss\dev\repack-fpk.py qbrss.fpk qbrss-1.6.4.fpk
+D:\workspace\fnos\tools\fnpack.exe build -d D:\workspace\fnos\anirss
+python anirss\dev\repack-fpk.py anirss.fpk anirss-1.7.0.fpk
 ```
 
 `fnpack` 在 Windows 上会把 `cmd/*` 写成 `0666`；`repack-fpk.py` 只重写外层 tar，把生命周期脚本改成 `0755`，不会改动 `app.tgz`，因此 `manifest.checksum` 仍有效。
@@ -474,7 +506,7 @@ python qbrss\dev\repack-fpk.py qbrss.fpk qbrss-1.6.4.fpk
 ## 目录结构
 
 ```text
-qbrss/
+anirss/
 ├── app/
 │   ├── server/         # Node.js 后端（HTTP、RSS、qB、调度、存储）
 │   ├── www/            # 原生 HTML/CSS/JS 前端 + 主题初始化
@@ -523,6 +555,7 @@ qbrss/
 | GET/DELETE | `/api/downloads` | 下载记录 / 清空 |
 | POST | `/api/downloads/:id/retry` | 重试失败记录 |
 | GET | `/api/export` | 导出配置（不含密码） |
+| POST | `/api/import` | 导入配置（站点 / 路径 / 追番 / 补番 / 连接；密码不从文件读取） |
 
 所有接口都基于同源访问，没有额外的 API Token。独立端口不要把 18181 直接暴露到公网。
 
@@ -539,4 +572,4 @@ qbrss/
 
 ---
 
-版本：1.6.4
+版本：1.7.0

@@ -4,7 +4,7 @@
  * 本地端到端烟测：
  *   - 内置一个假 qBittorrent WebUI
  *   - 内置一个假 RSS 源（可动态加条目）
- *   - 拉起真实 qbrss 服务，逐项断言追番 / 正则 / 去重 / 失败重试 / 种子提交
+ *   - 拉起真实 anirss 服务，逐项断言追番 / 正则 / 去重 / 失败重试 / 种子提交
  *
  * 运行：node dev/smoke.js
  */
@@ -20,7 +20,7 @@ const { parseTorrentInfo } = require('../app/server/bencode');
 const NODE = process.execPath;
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = path.join(ROOT, 'app', 'server', 'index.js');
-const DATA_DIR = path.join(ROOT, '..', 'work', 'qbrss-smoke-data');
+const DATA_DIR = path.join(ROOT, '..', 'work', 'anirss-smoke-data');
 const APP_PORT = 8788;
 const QB_PORT = 18080;
 const RSS_PORT = 18081;
@@ -355,7 +355,7 @@ async function waitHealth() {
     } catch { /* retry */ }
     await sleep(100);
   }
-  throw new Error('qbrss 未在预期时间内启动');
+  throw new Error('anirss 未在预期时间内启动');
 }
 
 async function main() {
@@ -371,7 +371,7 @@ async function main() {
   const logFd = fs.openSync(logPath, 'a');
   const child = spawn(NODE, [SERVER], {
     cwd: ROOT,
-    env: { ...process.env, QBRSS_DATA: DATA_DIR, QBRSS_PORT: String(APP_PORT), QBRSS_HOST: '127.0.0.1' },
+    env: { ...process.env, ANIRSS_DATA: DATA_DIR, ANIRSS_PORT: String(APP_PORT), ANIRSS_HOST: '127.0.0.1' },
     stdio: ['ignore', logFd, logFd],
     windowsHide: true,
   });
@@ -773,6 +773,43 @@ async function main() {
     assert.ok(stats.downloadsTotal >= 4);
     console.log(`✓ 统计：追番 ${stats.subs}，下载成功 ${stats.downloadsTotal}，失败 ${stats.failed}`);
 
+    // 健康检查标识与导入配置（放在统计之后，因为导入是覆盖式的）
+    const health = await api('/api/health');
+    assert.strictEqual(health.app, 'anirss');
+    const pwBefore = (await api('/api/state')).qb.hasPassword;
+    const imported = await api('/api/import', {
+      method: 'POST',
+      body: {
+        app: 'anirss',
+        bases: [{ id: 'b_imported', name: '导入站点', url: 'https://example.test', note: '' }],
+        paths: [{ id: 'p_imported', name: '导入路径', template: '/imported/${name}' }],
+        subs: [{
+          id: 's_imported',
+          name: '导入追番',
+          url: 'https://example.test/RSS/Bangumi?bangumiId=1',
+          include: '1080p',
+          exclude: '',
+          savePath: '/imported/导入追番',
+          enabled: false,
+          intervalMinutes: 30,
+          maxPerCheck: 3,
+          ignoreCase: true,
+          needsSeed: true,
+        }],
+        extras: [],
+        qb: { baseUrl: 'http://127.0.0.1:18080', username: 'admin', skipTlsVerify: false },
+      },
+    });
+    assert.strictEqual(imported.totals.subs, 1);
+    assert.strictEqual(imported.totals.bases, 1);
+    assert.strictEqual(imported.totals.paths, 1);
+    const afterImport = await api('/api/state');
+    assert.strictEqual(afterImport.subs.length, 1, '导入是覆盖式的');
+    assert.strictEqual(afterImport.subs[0].name, '导入追番');
+    assert.strictEqual(afterImport.qb.hasPassword, pwBefore, '导入不应清掉本机 qB 密码');
+    await expectError(() => api('/api/import', { method: 'POST', body: { hello: 1 } }), 400, '没有可导入的配置项');
+    console.log('✓ 配置导入（覆盖式 / 保留密码 / 拒绝空文件）');
+
     console.log(`\n全部通过。qB 收到 ${qbAdds.length} 个种子，RSS 拉取 ${rssHits} 次。`);
   } finally {
     await cleanup();
@@ -783,7 +820,7 @@ main().catch(async (e) => {
   console.error('\n烟测失败：', e && e.stack ? e.stack : e);
   try {
     const log = fs.readFileSync(path.join(DATA_DIR, 'stdout.log'), 'utf8');
-    console.error('\n--- qbrss log ---\n' + log.slice(-4000));
+    console.error('\n--- anirss log ---\n' + log.slice(-4000));
   } catch { /* ignore */ }
   process.exitCode = 1;
 });

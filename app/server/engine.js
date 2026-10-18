@@ -61,7 +61,7 @@ class Engine {
     this.timer = null;
     this.ticking = false;
     setProxy(this.data.proxy);
-    this.log('info', `qB RSS 追番 ${APP_VERSION} 已启动`);
+    this.log('info', `AniRSS 追番台 ${APP_VERSION} 已启动`);
     this.sweepStaleDownloads();
     this.store.save();
   }
@@ -1777,7 +1777,7 @@ class Engine {
     });
     return {
       app: {
-        name: 'qbrss',
+        name: 'anirss',
         version: APP_VERSION,
         startedAt: this.startedAt,
         serverTime: nowMs(),
@@ -1797,9 +1797,59 @@ class Engine {
     };
   }
 
+  /**
+   * 导入配置：接受 /api/export 的导出文件，或直接是旧的 config.json。
+   * 站点、路径、追番、补番、代理会被覆盖；qBittorrent 与代理的密码保留本机现有值（导出文件里本来就没有）。
+   */
+  importConfig(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw badRequest('配置文件内容不是有效的 JSON 对象', 'BAD_IMPORT');
+    }
+    const src = payload.data && typeof payload.data === 'object' ? payload.data : payload;
+    const keys = ['bases', 'paths', 'subs', 'extras', 'qb', 'proxy'];
+    if (!keys.some((k) => src[k] !== undefined)) {
+      throw badRequest('配置文件里没有可导入的配置项（站点 / 路径 / 追番 / 补番 / 连接）', 'EMPTY_IMPORT');
+    }
+
+    const counts = {};
+    if (Array.isArray(src.bases)) { this.data.bases = src.bases; counts.bases = src.bases.length; }
+    if (Array.isArray(src.paths)) { this.data.paths = src.paths; counts.paths = src.paths.length; }
+    if (Array.isArray(src.subs)) { this.data.subs = src.subs; counts.subs = src.subs.length; }
+    if (Array.isArray(src.extras)) { this.data.extras = src.extras; counts.extras = src.extras.length; }
+    if (src.qb && typeof src.qb === 'object') {
+      const qb = this.data.qb;
+      if (src.qb.baseUrl) qb.baseUrl = String(src.qb.baseUrl);
+      if (src.qb.username !== undefined) qb.username = String(src.qb.username || '');
+      if (src.qb.skipTlsVerify !== undefined) qb.skipTlsVerify = !!src.qb.skipTlsVerify;
+      if (typeof src.qb.password === 'string' && src.qb.password) qb.password = src.qb.password;
+      counts.qb = 1;
+    }
+    if (src.proxy && typeof src.proxy === 'object') {
+      this.data.proxy = normalizeProxy(src.proxy);
+      counts.proxy = 1;
+    }
+
+    this.store._normalize();
+    this.cache.clear();
+    this.homeMetaCache.clear();
+    this.store.save();
+    this.log('info', `已导入配置：站点 ${counts.bases || 0}、路径 ${counts.paths || 0}、追番 ${counts.subs || 0}、补番 ${counts.extras || 0}`);
+    return {
+      ok: true,
+      imported: counts,
+      totals: {
+        bases: this.data.bases.length,
+        paths: this.data.paths.length,
+        subs: this.data.subs.length,
+        extras: this.data.extras.length,
+      },
+      note: '为了安全，qBittorrent 与代理的密码没有导入，请到「连接设置」确认。',
+    };
+  }
+
   exportConfig() {
     return {
-      app: 'qbrss',
+      app: 'anirss',
       version: APP_VERSION,
       exportedAt: new Date().toISOString(),
       note: '不包含 qBittorrent 密码与代理密码；导入后请重新填写密码。',

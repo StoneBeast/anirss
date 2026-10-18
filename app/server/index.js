@@ -16,16 +16,41 @@ const {
 const SERVER_DIR = __dirname;
 const APP_DIR = path.resolve(SERVER_DIR, '..');
 const WWW = path.join(APP_DIR, 'www');
-const SOCKET = process.env.QBRSS_SOCKET ||
+// 环境变量统一用 ANIRSS_*；同时兼容旧的 QBRSS_*（1.7.0 之前的部署脚本）
+const env = (name) => process.env['ANIRSS_' + name] || process.env['QBRSS_' + name] || '';
+const SOCKET = env('SOCKET') ||
   (process.env.TRIM_APPDEST ? path.join(process.env.TRIM_APPDEST, 'app.sock') : '');
 const IS_FNOS = !!(process.env.TRIM_APPDEST || process.env.TRIM_SERVICE_PORT);
-const DATA_DIR = process.env.QBRSS_DATA || process.env.TRIM_PKGVAR || path.join(APP_DIR, '..', 'data');
-const PORT = process.env.QBRSS_PORT
-  ? Number(process.env.QBRSS_PORT)
+const DATA_DIR = env('DATA') || process.env.TRIM_PKGVAR || path.join(APP_DIR, '..', 'data');
+const PORT = env('PORT')
+  ? Number(env('PORT'))
   : (Number(process.env.TRIM_SERVICE_PORT) || (SOCKET ? 0 : 8777));
-const HOST = process.env.QBRSS_HOST || (IS_FNOS ? '0.0.0.0' : '127.0.0.1');
+const HOST = env('HOST') || (IS_FNOS ? '0.0.0.0' : '127.0.0.1');
 const GATEWAY_PREFIX = '/app/' + (process.env.TRIM_APPNAME || APP_NAME);
 const BODY_LIMIT = 2 * 1024 * 1024;
+
+/** 1.7.0 起应用 id 由 qbrss 改为 anirss；首次启动时把旧目录的数据搬过来 */
+function migrateLegacyData(dir) {
+  if (fs.existsSync(path.join(dir, 'config.json'))) return;
+  const candidates = [
+    process.env.QBRSS_DATA || '',
+    '/var/apps/qbrss/var',
+    path.join(APP_DIR, '..', '..', 'qbrss', 'data'),
+  ].filter(Boolean);
+  for (const from of candidates) {
+    try {
+      if (!fs.existsSync(path.join(from, 'config.json'))) continue;
+      fs.mkdirSync(dir, { recursive: true });
+      fs.cpSync(from, dir, { recursive: true, force: false, errorOnExist: false });
+      console.log(`[anirss] 已从旧数据目录迁移：${from} -> ${dir}`);
+      return;
+    } catch (e) {
+      console.error(`[anirss] 迁移旧数据失败（${from}）：${e.message}`);
+    }
+  }
+}
+
+migrateLegacyData(DATA_DIR);
 
 const store = new Store(path.join(DATA_DIR, 'config.json'));
 const engine = new Engine(store);
@@ -465,8 +490,13 @@ async function handleApi(req, res, pathname, query) {
     const data = Buffer.from(JSON.stringify(engine.exportConfig(), null, 2), 'utf8');
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     return sendBuffer(res, 200, data, 'application/json; charset=utf-8', {
-      'Content-Disposition': `attachment; filename="qbrss-backup-${stamp}.json"`,
+      'Content-Disposition': `attachment; filename="anirss-backup-${stamp}.json"`,
     });
+  }
+
+  if (pathname === '/api/import' && method === 'POST') {
+    const body = await readJson(req, 12 * 1024 * 1024);
+    return sendJson(res, 200, engine.importConfig(body));
   }
 
   throw httpError(404, `接口不存在：${method} ${pathname}`, 'API_NOT_FOUND');
@@ -528,7 +558,7 @@ function start() {
   const listen = (server, target, cb) => {
     const isTcp = target && typeof target === 'object';
     server.once('error', (e) => {
-      console.error(`[qbrss] 监听失败 ${typeof target === 'string' ? target : HOST + ':' + PORT}：${e.message}`);
+      console.error(`[anirss] 监听失败 ${typeof target === 'string' ? target : HOST + ':' + PORT}：${e.message}`);
       process.exitCode = 1;
       // fnOS 桌面入口现在是独立端口，端口占用时直接失败，避免“图标能开但浏览器打不开”
       if (IS_FNOS && isTcp) {
@@ -543,11 +573,11 @@ function start() {
   if (PORT) {
     const tcpServer = http.createServer(handleRequest);
     listen(tcpServer, { port: PORT, host: HOST }, () => {
-      console.log(`[qbrss] listening on http://${HOST}:${PORT}`);
+      console.log(`[anirss] listening on http://${HOST}:${PORT}`);
       if (HOST === '0.0.0.0') {
-        console.log(`[qbrss] 浏览器访问：http://<NAS-IP>:${PORT}`);
+        console.log(`[anirss] 浏览器访问：http://<NAS-IP>:${PORT}`);
       } else {
-        console.log('[qbrss] 本机访问：http://127.0.0.1:' + PORT);
+        console.log('[anirss] 本机访问：http://127.0.0.1:' + PORT);
       }
     });
   }
@@ -556,18 +586,18 @@ function start() {
     try {
       if (fs.existsSync(SOCKET)) fs.unlinkSync(SOCKET);
     } catch (e) {
-      console.error(`[qbrss] 无法清理旧 socket：${e.message}`);
+      console.error(`[anirss] 无法清理旧 socket：${e.message}`);
     }
     const socketServer = http.createServer(handleRequest);
     listen(socketServer, SOCKET, () => {
       try { fs.chmodSync(SOCKET, 0o660); } catch { /* ignore */ }
-      console.log(`[qbrss] listening on ${SOCKET}`);
-      console.log(`[qbrss] gateway prefix ${GATEWAY_PREFIX}`);
+      console.log(`[anirss] listening on ${SOCKET}`);
+      console.log(`[anirss] gateway prefix ${GATEWAY_PREFIX}`);
     });
   }
 
-  console.log(`[qbrss] version ${APP_VERSION}`);
-  console.log(`[qbrss] data dir ${DATA_DIR}`);
+  console.log(`[anirss] version ${APP_VERSION}`);
+  console.log(`[anirss] data dir ${DATA_DIR}`);
   engine.start();
   engine.log('info', `HTTP 服务已启动（${SOCKET ? 'socket ' + SOCKET : 'port ' + PORT}）`);
 
@@ -575,7 +605,7 @@ function start() {
   const shutdown = (signal) => {
     if (closing) return;
     closing = true;
-    console.log(`[qbrss] ${signal} received, shutting down`);
+    console.log(`[anirss] ${signal} received, shutting down`);
     engine.stop();
     for (const s of servers) {
       try { s.close(); } catch { /* ignore */ }

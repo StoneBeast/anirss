@@ -1,8 +1,8 @@
 {
-  "name": "qbrss",
-  "version": "1.6.4",
+  "name": "anirss",
+  "version": "1.7.0",
   "private": true,
-  "description": "qBittorrent RSS subscription manager with site search, path presets and one-off magnet/torrent downloads",
+  "description": "AniRSS · 追番台 — self-hosted RSS anime tracker that filters titles with regex and pushes them to qBittorrent",
   "main": "app/server/index.js",
   "scripts": {
     "start": "node app/server/index.js",

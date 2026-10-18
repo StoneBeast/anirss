@@ -2,7 +2,7 @@
 # 卸载清理：默认保留数据；仅当用户在卸载向导里选择「删除」时才清理本应用目录。
 set -u
 
-APPNAME="${TRIM_APPNAME:-qbrss}"
+APPNAME="${TRIM_APPNAME:-anirss}"
 MODE="${wizard_uninstall_data_action:-keep}"
 REMOVED=0
 SKIPPED=0

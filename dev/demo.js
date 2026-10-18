@@ -3,7 +3,7 @@
 /**
  * 演示环境：假 qBittorrent + 假 RSS + 一份预置配置
  * 用法：node dev/demo.js
- * 然后另开进程：QBRSS_DATA=../work/qbrss-demo-data QBRSS_PORT=8777 node app/server/index.js
+ * 然后另开进程：ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
  */
 
 const http = require('http');
@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const DATA_DIR = path.join(ROOT, '..', 'work', 'qbrss-demo-data');
+const DATA_DIR = path.join(ROOT, '..', 'work', 'anirss-demo-data');
 const QB_PORT = 18080;
 const RSS_PORT = 18081;
 const NOW = Date.now();
@@ -568,7 +568,7 @@ function writeConfig() {
   const rss = await startRss();
   console.log('[demo] mock qBittorrent on http://127.0.0.1:' + QB_PORT);
   console.log('[demo] mock RSS on http://127.0.0.1:' + RSS_PORT);
-  console.log('[demo] 现在启动 qbrss：QBRSS_DATA="' + DATA_DIR + '" QBRSS_PORT=8777 node app/server/index.js');
+  console.log('[demo] 现在启动 anirss：ANIRSS_DATA="' + DATA_DIR + '" ANIRSS_PORT=8777 node app/server/index.js');
   const stop = () => {
     qb.close();
     rss.close();
