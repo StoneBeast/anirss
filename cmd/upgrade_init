@@ -1,0 +1,6 @@
+#!/bin/bash
+# 升级前：停止服务，避免占用旧文件
+DIR="$(cd "$(dirname "$0")" && pwd)"
+"$DIR/main" stop >/dev/null 2>&1
+
+exit 0

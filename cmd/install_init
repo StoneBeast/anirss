@@ -1,0 +1,7 @@
+#!/bin/bash
+# 安装解压前：清理用户可见错误信息
+if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    : >"$TRIM_TEMP_LOGFILE"
+fi
+
+exit 0

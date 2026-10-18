@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4f7fb">
+  <title>qB RSS 追番</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <script src="theme-init.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="backdrop-decor" aria-hidden="true"></div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#/overview" aria-label="qB RSS 追番">
+        <span class="brand-mark">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <circle cx="13" cy="27" r="3.2" fill="currentColor"/>
+            <path d="M10 18a12 12 0 0 1 12 12" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/>
+            <path d="M10 11a19 19 0 0 1 19 19" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" opacity=".55"/>
+            <path d="M27 8v13m0 0 5-5m-5 5-5-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <strong>qB RSS</strong>
+          <small>追番 · 下载中心</small>
+        </span>
+      </a>
+
+      <nav class="nav" id="nav" aria-label="主导航">
+        <a href="#/overview" data-nav="overview">
+          <span class="nav-icon" data-icon="grid"></span><span>总览</span>
+        </a>
+        <a href="#/subs" data-nav="subs">
+          <span class="nav-icon" data-icon="rss"></span><span>追番</span>
+          <span class="nav-count" id="nav-sub-count"></span>
+        </a>
+        <a href="#/extras" data-nav="extras">
+          <span class="nav-icon" data-icon="magnet"></span><span>补番</span>
+          <span class="nav-count" id="nav-extra-count"></span>
+        </a>
+        <a href="#/downloads" data-nav="downloads">
+          <span class="nav-icon" data-icon="download"></span><span>下载记录</span>
+        </a>
+        <a href="#/library" data-nav="library">
+          <span class="nav-icon" data-icon="folder"></span><span>站点与路径</span>
+        </a>
+        <a href="#/connection" data-nav="connection">
+          <span class="nav-icon" data-icon="plug"></span><span>连接设置</span>
+        </a>
+      </nav>
+
+      <div class="side-bottom">
+        <a class="side-conn" href="#/connection" id="side-conn">
+          <span class="dot" id="side-dot"></span>
+          <span class="side-conn-main">
+            <strong>qBittorrent</strong>
+            <small id="side-conn-text">正在读取连接状态…</small>
+          </span>
+          <span class="side-conn-arrow" data-icon="arrow-up-right"></span>
+        </a>
+        <div class="side-meta">
+          <span>v1.6.4</span>
+          <span class="side-meta-sep"></span>
+          <span>本地服务</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <span class="topbar-crumb" id="crumb">总览</span>
+          <span class="topbar-live" id="live-time"></span>
+        </div>
+        <div class="topbar-right">
+          <button class="icon-btn theme-toggle" type="button" id="theme-toggle" data-action="toggle-theme" title="切换主题" aria-label="切换主题"></button>
+          <a class="status-pill" id="status-pill" href="#/connection">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-text">读取中</span>
+          </a>
+          <button class="btn btn-ghost" type="button" data-action="check-all" id="check-all-btn">
+            <span data-icon="refresh"></span><span>全部检查</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="view" id="view" aria-live="polite">
+        <div class="skeleton-page">
+          <div class="skeleton skeleton-title"></div>
+          <div class="skeleton skeleton-hero"></div>
+          <div class="skeleton-row">
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="drawer-root"></div>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "qbrss.main": {
+      "title": "qB RSS 订阅",
+      "desc": "RSS 订阅、正则过滤与 qBittorrent 自动下载",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "protocol": "http",
+      "port": "18181",
+      "url": "/",
+      "allUsers": false
+    }
+  }
+}

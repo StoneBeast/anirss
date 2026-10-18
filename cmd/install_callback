@@ -1,0 +1,17 @@
+#!/bin/bash
+# 安装完成：初始化数据目录并记录环境信息
+set -u
+
+VAR="${TRIM_PKGVAR:-/var/apps/qbrss/var}"
+LOG="$VAR/install.log"
+mkdir -p "$VAR" 2>/dev/null
+
+{
+    echo "=== qbrss install $(date '+%Y-%m-%d %H:%M:%S') ==="
+    echo "TRIM_APPVER    = ${TRIM_APPVER:-}"
+    echo "TRIM_APPDEST   = ${TRIM_APPDEST:-}"
+    echo "TRIM_PKGVAR    = ${TRIM_PKGVAR:-}"
+    echo "TRIM_USERNAME  = ${TRIM_USERNAME:-}"
+} >>"$LOG" 2>/dev/null
+
+exit 0

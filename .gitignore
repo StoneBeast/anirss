@@ -1,0 +1,15 @@
+# 运行时数据（qBittorrent 密码、追番配置、日志）
+data/
+node_modules/
+*.log
+
+# 构建产物
+dist/
+*.fpk
+*.tgz
+
+# 本地临时文件
+work/
+tmp/
+.DS_Store
+Thumbs.db

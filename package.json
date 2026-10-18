@@ -1,0 +1,14 @@
+{
+  "name": "qbrss",
+  "version": "1.6.4",
+  "private": true,
+  "description": "qBittorrent RSS subscription manager with site search, path presets and one-off magnet/torrent downloads",
+  "main": "app/server/index.js",
+  "scripts": {
+    "start": "node app/server/index.js",
+    "test": "node dev/unit.js && node dev/smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
