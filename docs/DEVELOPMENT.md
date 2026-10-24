@@ -44,7 +44,7 @@ ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
 fnpack.exe build -d <项目目录>
 
 # 2) 修正 cmd/ 权限并改名输出
-python dev/repack-fpk.py anirss.fpk anirss-1.10.0.fpk
+python dev/repack-fpk.py anirss.fpk anirss-1.10.1.fpk
 ```
 
 `repack-fpk.py` 只重写外层 tar（把生命周期脚本改成 `0755`），不改动 `app.tgz`，因此 `manifest.checksum` 仍然有效。构建后用 `tar -tzf` 检查顶层结构：`app.tgz`、`manifest`、`cmd/`、`config/`、`wizard/`、两个图标。
