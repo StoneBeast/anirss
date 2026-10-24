@@ -5,6 +5,7 @@ const https = require('https');
 const crypto = require('crypto');
 const querystring = require('querystring');
 const { normalizeBaseUrl, UA, httpError, truncate } = require('./util');
+const { agentFor } = require('./agents');
 
 const DEFAULT_TIMEOUT = 20000;
 
@@ -58,6 +59,8 @@ class QBClient {
           headers,
           timeout: opts.timeout || DEFAULT_TIMEOUT,
           rejectUnauthorized: !this.skipTlsVerify,
+          // qB API 是高频小请求，复用 keep-alive 连接省掉每次的 TCP/TLS 握手
+          agent: agentFor(target.protocol, !this.skipTlsVerify),
         },
         (res) => {
           const chunks = [];
@@ -314,6 +317,15 @@ class QBClient {
     if (!list.length) return [];
     await this.ensureLogin();
     const data = await this.getJson('/api/v2/torrents/info?hashes=' + encodeURIComponent(list.join('|')));
+    return Array.isArray(data) ? data : [];
+  }
+
+  /** 查询单个种子的文件列表（name 相对 save_path），用于硬链接 */
+  async torrentsFiles(hash) {
+    const h = String(hash || '').toLowerCase();
+    if (!/^[a-f0-9]{40}$/.test(h)) return [];
+    await this.ensureLogin();
+    const data = await this.getJson('/api/v2/torrents/files?hash=' + encodeURIComponent(h));
     return Array.isArray(data) ? data : [];
   }
 

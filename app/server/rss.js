@@ -53,10 +53,27 @@ function cleanText(input, max) {
   return max ? truncate(s, max) : s;
 }
 
+// 标签名集合固定（title/guid/pubDate/enclosure…），编译结果缓存复用，
+// 避免每个条目每次拉取都重新 new RegExp（一份 feed 会有上千次编译）。
+const tagReCache = new Map();
+
+function cachedTagRe(kind, name) {
+  const key = kind + '|' + name;
+  let re = tagReCache.get(key);
+  if (!re) {
+    const escaped = escapeRegExp(name);
+    re = kind === 'block'
+      ? new RegExp('<' + escaped + '(?:\\s[^>]*)?>([\\s\\S]*?)<\\/' + escaped + '\\s*>', 'i')
+      : new RegExp('<' + escaped + '\\b[^>]*>', 'gi');
+    tagReCache.set(key, re);
+  }
+  re.lastIndex = 0;
+  return re;
+}
+
 function textOf(block, names) {
   for (const name of names) {
-    const re = new RegExp('<' + escapeRegExp(name) + '(?:\\s[^>]*)?>([\\s\\S]*?)<\\/' + escapeRegExp(name) + '\\s*>', 'i');
-    const m = re.exec(block);
+    const m = cachedTagRe('block', name).exec(block);
     if (m) {
       const value = cleanText(m[1]);
       if (value) return value;
@@ -78,7 +95,7 @@ function attrsOf(tag) {
 }
 
 function findTagAttrs(block, tagName) {
-  const re = new RegExp('<' + escapeRegExp(tagName) + '\\b[^>]*>', 'gi');
+  const re = cachedTagRe('attrs', tagName);
   const out = [];
   let m;
   while ((m = re.exec(block))) out.push(attrsOf(m[0]));

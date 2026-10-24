@@ -1,12 +1,12 @@
 {
   "name": "anirss",
-  "version": "1.7.0",
+  "version": "1.10.0",
   "private": true,
   "description": "AniRSS · 追番台 — self-hosted RSS anime tracker that filters titles with regex and pushes them to qBittorrent",
   "main": "app/server/index.js",
   "scripts": {
     "start": "node app/server/index.js",
-    "test": "node dev/unit.js && node dev/smoke.js"
+    "test": "node dev/unit.js && node dev/smoke.js && node dev/perf-check.js"
   },
   "engines": {
     "node": ">=18"

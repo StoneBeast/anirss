@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const {
   APP_VERSION,
   uid,
@@ -21,10 +22,12 @@ const {
   todayStart,
   guessEpisode,
   episodeRanges,
+  ByteLruCache,
 } = require('./util');
 const { fetchFeed } = require('./rss');
 const { fetchBuffer, isHtmlResponse } = require('./http');
 const { QBClient } = require('./qb');
+const hardlink = require('./hardlink');
 const { parseTorrentInfo, magnetInfoHash } = require('./bencode');
 const { setProxy, publicProxy: proxyPublic, normalizeProxy, proxyLabel } = require('./proxy');
 const {
@@ -39,6 +42,17 @@ function sortByNewest(list) {
   return list.slice().sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
 }
 
+/** 把名称变成可用于路径的一段（与前端同名逻辑保持一致） */
+function sanitizeShareName(name) {
+  return String(name == null ? '' : name)
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/[\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    .trim()
+    .slice(0, 120);
+}
+
 class Engine {
   constructor(store) {
     this.store = store;
@@ -51,15 +65,18 @@ class Engine {
     this.qbClient = null;
     this.qbClientKey = '';
     this.qbStatusCache = { at: 0, data: null };
-    this.coverCache = new Map();
+    // 封面/远程图片按字节预算淘汰（单图上限 8MB，按条数淘汰最坏能吃掉数百 MB 内存）
+    this.coverCache = new ByteLruCache(64 * 1024 * 1024, 200);
     this.resolveCache = new Map();
     this.searchCache = new Map();
     this.episodeCache = new Map();
     this.homeMetaCache = new Map();
     this.subgroupCache = new Map();
-    this.imageCache = new Map();
+    this.imageCache = new ByteLruCache(64 * 1024 * 1024, 240);
     this.timer = null;
     this.ticking = false;
+    this.hardlinkBusy = new Set();
+    this.hardlinkTicking = false;
     setProxy(this.data.proxy);
     this.log('info', `AniRSS 追番台 ${APP_VERSION} 已启动`);
     this.sweepStaleDownloads();
@@ -84,6 +101,7 @@ class Engine {
     const entry = { at: nowMs(), level, msg: truncate(message, 600) };
     this.data.logs.unshift(entry);
     if (this.data.logs.length > MAX_LOGS) this.data.logs.length = MAX_LOGS;
+    this.store.bump(); // 日志进 /api/state，rev 要动一下让 ETag 失效
     const fn = level === 'error' ? console.error : console.log;
     fn(`[${level}] ${entry.msg}`);
   }
@@ -177,6 +195,109 @@ class Engine {
     }
   }
 
+  // ---------- 补番硬链接 ----------
+
+  publicHardlinkConfig() {
+    const cfg = this.data.hardlink || {};
+    return {
+      mode: cfg.mode === 'mirror' ? 'mirror' : 'season',
+      videoExts: String(cfg.videoExts || hardlink.DEFAULT_EXTENSIONS),
+      subExts: String(cfg.subExts || hardlink.DEFAULT_SUB_EXTENSIONS),
+      excludeDirs: String(cfg.excludeDirs == null ? hardlink.DEFAULT_EXCLUDE_DIRS : cfg.excludeDirs),
+      excludeTags: String(cfg.excludeTags == null ? hardlink.DEFAULT_EXCLUDE_TAGS : cfg.excludeTags),
+      includeFonts: !!cfg.includeFonts,
+      stripRoot: !!cfg.stripRoot,
+      renamePattern: String(cfg.renamePattern || '${name} - ${episode2}'),
+      defaultDest: String(cfg.defaultDest || ''),
+    };
+  }
+
+  saveHardlink(input) {
+    const src = input || {};
+    const cur = this.data.hardlink || {};
+    let defaultDest = src.defaultDest === undefined ? String(cur.defaultDest || '') : String(src.defaultDest || '').trim();
+    if (defaultDest && !path.isAbsolute(defaultDest)) {
+      throw badRequest('默认硬链接目录必须是绝对路径（例如 /volume1/media/动画）', 'BAD_HARDLINK_DEST');
+    }
+    if (defaultDest) defaultDest = path.normalize(defaultDest).replace(/[\\/]+$/, '');
+    const mode = src.mode === undefined ? (cur.mode === 'mirror' ? 'mirror' : 'season') : (src.mode === 'mirror' ? 'mirror' : 'season');
+    const text = (value, fallback, max) => (value === undefined ? String(fallback == null ? '' : fallback) : String(value || '')).trim().slice(0, max || 300);
+    let renamePattern = text(src.renamePattern, cur.renamePattern == null ? '${name} - ${episode2}' : cur.renamePattern, 200);
+    if (!renamePattern) renamePattern = '${name} - ${episode2}';
+    if (!/\$\{?\{?\s*episode2?\s*\}?\}/i.test(renamePattern)) {
+      throw badRequest('重命名模板必须包含 ${episode} 或 ${episode2}，否则每集都会重名', 'BAD_RENAME_PATTERN');
+    }
+    const next = {
+      mode,
+      videoExts: text(src.videoExts, cur.videoExts == null ? hardlink.DEFAULT_EXTENSIONS : cur.videoExts),
+      subExts: text(src.subExts, cur.subExts == null ? hardlink.DEFAULT_SUB_EXTENSIONS : cur.subExts),
+      excludeDirs: text(src.excludeDirs, cur.excludeDirs == null ? hardlink.DEFAULT_EXCLUDE_DIRS : cur.excludeDirs, 600),
+      excludeTags: text(src.excludeTags, cur.excludeTags == null ? hardlink.DEFAULT_EXCLUDE_TAGS : cur.excludeTags, 600),
+      includeFonts: src.includeFonts === undefined ? !!cur.includeFonts : !!src.includeFonts,
+      stripRoot: src.stripRoot === undefined ? !!cur.stripRoot : !!src.stripRoot,
+      renamePattern,
+      defaultDest,
+    };
+    const before = {
+      mode: cur.mode === 'mirror' ? 'mirror' : 'season',
+      videoExts: String(cur.videoExts == null ? hardlink.DEFAULT_EXTENSIONS : cur.videoExts),
+      subExts: String(cur.subExts == null ? hardlink.DEFAULT_SUB_EXTENSIONS : cur.subExts),
+      excludeDirs: String(cur.excludeDirs == null ? hardlink.DEFAULT_EXCLUDE_DIRS : cur.excludeDirs),
+      excludeTags: String(cur.excludeTags == null ? hardlink.DEFAULT_EXCLUDE_TAGS : cur.excludeTags),
+      includeFonts: !!cur.includeFonts,
+      stripRoot: !!cur.stripRoot,
+      renamePattern: String(cur.renamePattern || '${name} - ${episode2}'),
+      defaultDest: String(cur.defaultDest || ''),
+    };
+    const changed = JSON.stringify(next) !== JSON.stringify(before);
+    this.data.hardlink = next;
+    if (changed) {
+      this.store.save();
+      const label = next.mode === 'mirror' ? '全部文件（保持相对路径）' : '正片+字幕（平铺到季目录）';
+      this.log('info', `硬链接设置已保存：${label}，视频 ${next.videoExts || '全部'}，字幕 ${next.subExts || '无'}`);
+    }
+    return this.publicHardlinkConfig();
+  }
+
+  /**
+   * 校验并渲染硬链接目标目录。
+   * 支持 ${name}（补番名称）、${season}（季），以及路径预设里的数字变量：
+   * 第 1 个变量 = 名称，第 2 个及以后 = 季。
+   */
+  resolveHardlinkDest(input, name, season) {
+    const raw = String(input == null ? '' : input).trim();
+    if (!raw) return '';
+    const show = sanitizeShareName(name);
+    const seasonText = Number.isFinite(Number(season)) && Number(season) > 0 ? String(Math.trunc(Number(season))) : '';
+    let filled = raw
+      .replace(/\$?\{\{\s*name\s*\}\}|\$\{\s*name\s*\}/gi, show)
+      .replace(/\$?\{\{\s*season\s*\}\}|\$\{\s*season\s*\}/gi, seasonText);
+    // 路径预设里的数字变量：${1} / ${{1}} / ${{}}
+    let index = 0;
+    filled = filled.replace(/\$?\{\{\s*(\d*)\s*\}\}|\$\{\s*(\d+)\s*\}/g, (all, anon, num) => {
+      index += 1;
+      const value = index === 1 ? show : seasonText;
+      return value;
+    });
+    if (/\$\{/.test(filled)) {
+      throw badRequest('硬链接目录只支持 ${name} / ${season} 变量，其他模板变量请改成固定目录', 'BAD_HARDLINK_TEMPLATE');
+    }
+    if (!path.isAbsolute(filled)) {
+      throw badRequest('硬链接目录必须是绝对路径（例如 /volume1/media/动画）', 'BAD_HARDLINK_DEST');
+    }
+    const dest = path.normalize(filled).replace(/[\\/]+$/, '');
+    if (!dest) throw badRequest('硬链接目录无效', 'BAD_HARDLINK_DEST');
+    return dest.slice(0, 800);
+  }
+
+  /** 检查目录是否可写（用于解释「无法创建目录」并给出真实权限） */
+  probeHardlinkPath(input) {
+    const raw = String(input == null ? '' : input).trim();
+    if (!raw) throw badRequest('请填写要检查的目录', 'BAD_HARDLINK_PROBE');
+    if (!path.isAbsolute(raw)) throw badRequest('目录必须是绝对路径', 'BAD_HARDLINK_DEST');
+    return hardlink.probePath(raw);
+  }
+
   publicMeta(sub) {
     const m = sub.meta || {};
     return {
@@ -203,7 +324,7 @@ class Engine {
     if (!homeUrl) {
       sub.meta.error = '无法从追番地址推导番组主页（需要包含 bangumiId）';
       sub.meta.fetchedAt = nowMs();
-      this.store.save();
+      this.store.scheduleSave();
       if (options.throwOnError) throw httpError(400, sub.meta.error, 'NO_HOME_URL');
       return this.publicSub(sub);
     }
@@ -216,14 +337,14 @@ class Engine {
       sub.meta = { ...sub.meta, ...keep, error: '' };
       sub.meta.homeUrl = sub.meta.homeUrl || homeUrl;
       sub.updatedAt = nowMs();
-      this.store.save();
+      this.store.scheduleSave();
       this.log('info', `已更新「${sub.name}」番组信息${meta && meta.title ? `：${meta.title}` : ''}${meta && meta.bgmUrl ? '（含 Bangumi 链接）' : ''}`);
       return this.publicSub(sub);
     } catch (e) {
       sub.meta.error = e.message;
       sub.meta.fetchedAt = nowMs();
       sub.updatedAt = nowMs();
-      this.store.save();
+      this.store.scheduleSave();
       this.log('error', `更新「${sub.name}」番组信息失败：${e.message}`);
       if (options.throwOnError) throw e;
       return this.publicSub(sub);
@@ -252,11 +373,7 @@ class Engine {
       throw httpError(502, `封面返回的不是图片（${contentType || '未知类型'}）`, 'BAD_COVER');
     }
     const item = { at: nowMs(), buffer: res.buffer, contentType };
-    this.coverCache.set(cacheKey, item);
-    if (this.coverCache.size > 80) {
-      const first = this.coverCache.keys().next().value;
-      this.coverCache.delete(first);
-    }
+    this.coverCache.set(cacheKey, item, item.buffer.length);
     return item;
   }
 
@@ -828,7 +945,7 @@ class Engine {
         downloaded: downloadedSet.has(it.key),
       }));
       this.cache.set(sub.id, { at: nowMs(), feedTitle: feed.title, items: finalItems });
-      this.store.save();
+      this.store.scheduleSave();
 
       // 番组封面/元数据缺失或超过 7 天时后台刷新，不阻塞本次检查
       if (!sub.meta || !sub.meta.cover || nowMs() - (Number(sub.meta.fetchedAt) || 0) > 7 * 86400000) {
@@ -867,7 +984,7 @@ class Engine {
         durationMs: nowMs() - startedAt,
       };
       sub.lastRunAt = sub.lastCheck.at;
-      this.store.save();
+      this.store.scheduleSave();
       this.log('error', `「${sub.name}」检查失败：${e.message}`);
       throw e;
     } finally {
@@ -1050,7 +1167,7 @@ class Engine {
     };
     this.data.downloads.unshift(record);
     if (this.data.downloads.length > MAX_DOWNLOADS) this.data.downloads.length = MAX_DOWNLOADS;
-    this.store.save();
+    this.store.scheduleSave();
 
     try {
       const mode = await this.submitTorrent({
@@ -1066,7 +1183,7 @@ class Engine {
       sub.totalDownloads = (sub.totalDownloads || 0) + 1;
       sub.lastDownloadAt = record.updatedAt;
       this.log('info', `已提交下载「${item.title}」（${mode}）`);
-      this.store.save();
+      this.store.scheduleSave();
       return record;
     } catch (e) {
       if (e.code === 'QB_DUPLICATE') {
@@ -1075,14 +1192,14 @@ class Engine {
         record.error = e.message;
         record.updatedAt = nowMs();
         this.log('info', `跳过重复种子「${item.title}」：${e.message}`);
-        this.store.save();
+        this.store.scheduleSave();
         return record;
       }
       record.status = 'failed';
       record.error = this.downloadErrorMessage(e, sub);
       record.updatedAt = nowMs();
       this.log('error', `下载失败「${item.title}」：${record.error}`);
-      this.store.save();
+      this.store.scheduleSave();
       return record;
     }
   }
@@ -1106,7 +1223,7 @@ class Engine {
     const record = await this.downloadItem(sub, item, { force: !!(opts && opts.force) });
     item.seen = true;
     item.downloaded = record.status === 'ok' || record.status === 'duplicate';
-    this.store.save();
+    this.store.scheduleSave();
     return record;
   }
 
@@ -1136,7 +1253,7 @@ class Engine {
     record.status = 'pending';
     record.error = '';
     record.updatedAt = nowMs();
-    this.store.save();
+    this.store.scheduleSave();
     try {
       const mode = await this.submitTorrent({
         torrentUrl: record.torrentUrl,
@@ -1153,7 +1270,7 @@ class Engine {
         sub.lastDownloadAt = record.updatedAt;
       }
       this.log('info', `重试成功「${record.title}」`);
-      this.store.save();
+      this.store.scheduleSave();
       return record;
     } catch (e) {
       if (e.code === 'QB_DUPLICATE') {
@@ -1161,14 +1278,14 @@ class Engine {
         record.error = e.message;
         record.updatedAt = nowMs();
         this.log('info', `跳过重复种子「${record.title}」：${e.message}`);
-        this.store.save();
+        this.store.scheduleSave();
         return record;
       }
       record.status = 'failed';
       record.error = this.downloadErrorMessage(e, record);
       record.updatedAt = nowMs();
       this.log('error', `重试失败「${record.title}」：${record.error}`);
-      this.store.save();
+      this.store.scheduleSave();
       return record;
     }
   }
@@ -1232,15 +1349,24 @@ class Engine {
     this.timer = setInterval(() => {
       try { this.tick(); } catch (e) { this.log('error', '调度器异常：' + e.message); }
     }, 15000);
+    // 补番硬链接巡检：只扫等着链接的记录，下载完成后自动执行
+    this.hardlinkTimer = setInterval(() => {
+      try { this.hardlinkTick(); } catch { /* ignore */ }
+    }, 30000);
     setTimeout(() => {
       try { this.tick(); } catch { /* ignore */ }
     }, 5000);
-    this.log('info', '自动检查调度器已启动（每 15 秒扫描一次到期追番）');
+    setTimeout(() => {
+      try { this.hardlinkTick(); } catch { /* ignore */ }
+    }, 8000);
+    this.log('info', '自动检查调度器已启动（每 15 秒扫描一次到期追番，每 30 秒巡检补番硬链接）');
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
+    if (this.hardlinkTimer) clearInterval(this.hardlinkTimer);
     this.timer = null;
+    this.hardlinkTimer = null;
   }
 
   // ---------- 状态 / 统计 ----------
@@ -1540,8 +1666,7 @@ class Engine {
     const contentType = String(res.contentType || '').split(';')[0].trim() || 'image/jpeg';
     if (!/^image\//i.test(contentType)) throw httpError(502, `返回的不是图片（${contentType || '未知类型'}）`, 'BAD_IMAGE');
     const item = { at: nowMs(), buffer: res.buffer, contentType };
-    this.imageCache.set(target, item);
-    if (this.imageCache.size > 120) this.imageCache.delete(this.imageCache.keys().next().value);
+    this.imageCache.set(target, item, item.buffer.length);
     return item;
   }
 
@@ -1559,6 +1684,14 @@ class Engine {
   publicExtra(x) {
     const e = x || {};
     const guess = guessEpisode(e.name);
+    let destResolved = '';
+    if (e.hardlink && e.hardlink.dest) {
+      try {
+        destResolved = this.resolveHardlinkDest(e.hardlink.dest, e.name, e.hardlink.season);
+      } catch {
+        destResolved = e.hardlink.dest;
+      }
+    }
     return {
       id: e.id,
       name: e.name,
@@ -1577,6 +1710,30 @@ class Engine {
       episodeLabel: guess ? guess.label : '',
       episodeKind: guess ? guess.kind : '',
       qb: e.qb || null,
+      hardlink: e.hardlink
+        ? {
+          dest: e.hardlink.dest || '',
+          destResolved,
+          season: e.hardlink.season || 0,
+          enabled: e.hardlink.enabled !== false,
+          rename: !!e.hardlink.rename,
+          videoOffset: Number(e.hardlink.videoOffset) || 0,
+          subOffset: Number(e.hardlink.subOffset) || 0,
+          done: !!e.hardlink.done,
+          at: e.hardlink.at || 0,
+          files: e.hardlink.files || 0,
+          videos: e.hardlink.videos || 0,
+          subs: e.hardlink.subs || 0,
+          linked: e.hardlink.linked || 0,
+          existed: e.hardlink.existed || 0,
+          conflicts: e.hardlink.conflicts || 0,
+          skipped: e.hardlink.skipped || 0,
+          bytes: e.hardlink.bytes || 0,
+          error: e.hardlink.error || '',
+          attempts: e.hardlink.attempts || 0,
+          retryAt: e.hardlink.retryAt || 0,
+        }
+        : null,
     };
   }
 
@@ -1611,7 +1768,7 @@ class Engine {
     delete clean.buffer;
     this.data.extras.unshift(clean);
     if (this.data.extras.length > 300) this.data.extras.length = 300;
-    this.store.save();
+    this.store.scheduleSave();
   }
 
   async addExtra(input) {
@@ -1631,6 +1788,12 @@ class Engine {
       category: String(src.category || '').trim(),
       tags: String(src.tags || '').trim(),
       paused: !!src.paused,
+      hardlinkDest: String(src.hardlinkDest || '').trim(),
+      season: Number(src.season) || 0,
+      hardlinkEnabled: src.hardlinkEnabled !== false,
+      rename: !!src.rename,
+      videoOffset: Number(src.videoOffset) || 0,
+      subOffset: Number(src.subOffset) || 0,
     });
   }
 
@@ -1664,16 +1827,27 @@ class Engine {
       category: String(src.category || '').trim(),
       tags: String(src.tags || '').trim(),
       paused: !!src.paused,
+      hardlinkDest: String(src.hardlinkDest || '').trim(),
+      season: Number(src.season) || 0,
+      hardlinkEnabled: src.hardlinkEnabled !== false,
+      rename: !!src.rename,
+      videoOffset: Number(src.videoOffset) || 0,
+      subOffset: Number(src.subOffset) || 0,
     });
   }
 
   async submitExtra(payload) {
+    const name = truncate(String(payload.name || '未命名补番'), 160);
+    const season = Math.max(0, Math.min(999, Math.trunc(Number(payload.season) || 0)));
+    const destTemplate = String(payload.hardlinkDest || '').trim();
+    if (destTemplate) this.resolveHardlinkDest(destTemplate, name, season);
+    const offset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
     const rec = {
       id: uid('x_'),
       createdAt: nowMs(),
       ok: false,
       error: '',
-      name: truncate(String(payload.name || '未命名补番'), 160),
+      name,
       source: payload.source,
       magnet: payload.magnet || '',
       hash: String(payload.hash || '').toLowerCase(),
@@ -1683,6 +1857,27 @@ class Engine {
       tags: payload.tags || '',
       paused: !!payload.paused,
       qb: null,
+      hardlink: {
+        dest: destTemplate,
+        season,
+        enabled: payload.hardlinkEnabled !== false,
+        rename: !!payload.rename,
+        videoOffset: offset(payload.videoOffset),
+        subOffset: offset(payload.subOffset),
+        done: false,
+        at: 0,
+        files: 0,
+        videos: 0,
+        subs: 0,
+        linked: 0,
+        existed: 0,
+        conflicts: 0,
+        skipped: 0,
+        bytes: 0,
+        error: '',
+        attempts: 0,
+        retryAt: 0,
+      },
     };
     if (!/^[a-f0-9]{40}$/.test(rec.hash)) throw badRequest('无法确定种子 infohash', 'BAD_HASH');
     const dupRecord = this.data.extras.find((x) => x.ok && x.hash === rec.hash);
@@ -1710,9 +1905,24 @@ class Engine {
     }
   }
 
-  async extrasStatus() {
-    const list = this.data.extras.filter((x) => x.hash);
-    if (!list.length) return { ok: true, at: nowMs(), extras: this.extrasPublic(), missing: 0 };
+  /** 把 qB 的 torrents/info 条目转成记录里保存的 qb 快照 */
+  qbSnapshot(t, fallbackName) {
+    if (!t) return null;
+    return {
+      state: String(t.state || ''),
+      progress: Number(t.progress) || 0,
+      size: Number(t.size) || 0,
+      dlspeed: Number(t.dlspeed) || 0,
+      upspeed: Number(t.upspeed) || 0,
+      eta: Number(t.eta) || 0,
+      savePath: String(t.save_path || ''),
+      name: String(t.name || fallbackName || ''),
+      at: nowMs(),
+    };
+  }
+
+  /** 刷新一批补番记录的 qB 状态，返回 hash → info 的映射 */
+  async refreshExtraQb(list) {
     let info = [];
     let error = '';
     try {
@@ -1723,31 +1933,242 @@ class Engine {
     const map = new Map(info.map((t) => [String(t.hash || '').toLowerCase(), t]));
     let changed = false;
     for (const x of list) {
-      const t = map.get(String(x.hash).toLowerCase());
-      const next = t ? {
-        state: String(t.state || ''),
-        progress: Number(t.progress) || 0,
-        size: Number(t.size) || 0,
-        dlspeed: Number(t.dlspeed) || 0,
-        upspeed: Number(t.upspeed) || 0,
-        eta: Number(t.eta) || 0,
-        savePath: String(t.save_path || ''),
-        name: String(t.name || x.name),
-        at: nowMs(),
-      } : null;
+      const next = this.qbSnapshot(map.get(String(x.hash).toLowerCase()), x.name);
       if (JSON.stringify(next) !== JSON.stringify(x.qb || null)) {
         x.qb = next;
         changed = true;
       }
     }
-    if (changed) this.store.save();
+    return { map, error, changed };
+  }
+
+  async extrasStatus() {
+    const list = this.data.extras.filter((x) => x.hash);
+    if (!list.length) return { ok: true, at: nowMs(), extras: this.extrasPublic(), missing: 0 };
+    const { error, changed } = await this.refreshExtraQb(list);
+    if (changed) this.store.scheduleSave();
+    const linked = await this.autoHardlink(list);
     return {
       ok: !error,
       error,
       at: nowMs(),
-      missing: error ? 0 : Math.max(0, list.length - map.size),
+      missing: error ? 0 : list.filter((x) => !x.qb).length,
+      hardlinked: linked,
       extras: this.extrasPublic(),
     };
+  }
+
+  // ---------- 补番硬链接 ----------
+
+  /** 这条记录是否还等着做硬链接 */
+  wantsHardlink(x) {
+    return !!(x && x.ok && x.hash && x.hardlink && x.hardlink.dest
+      && x.hardlink.enabled !== false && !x.hardlink.done);
+  }
+
+  bumpHardlinkRetry(hl) {
+    hl.attempts = (Number(hl.attempts) || 0) + 1;
+    const delay = Math.min(60 * 60000, 2 * 60000 * Math.pow(2, Math.min(5, hl.attempts - 1)));
+    hl.retryAt = nowMs() + delay;
+  }
+
+  /** 下载完成（progress 到 1）后自动硬链接，最多一次处理 3 条 */
+  async autoHardlink(list) {
+    const ready = list.filter((x) => this.wantsHardlink(x)
+      && Number(x.qb && x.qb.progress) >= 0.9999
+      && nowMs() >= Number(x.hardlink.retryAt || 0));
+    let done = 0;
+    for (const x of ready.slice(0, 3)) {
+      try {
+        const result = await this.linkExtraRecord(x);
+        if (result) done++;
+      } catch { /* 单条失败不影响其它记录 */ }
+    }
+    return done;
+  }
+
+  /** 对一条记录执行硬链接（自动与手动共用） */
+  async linkExtraRecord(x) {
+    if (!x || !x.hardlink || !x.hardlink.dest) return null;
+    if (x.hardlink.enabled === false) return null;
+    if (this.hardlinkBusy.has(x.id)) return null;
+    this.hardlinkBusy.add(x.id);
+    const prevError = x.hardlink.error;
+    const fail = (message) => {
+      x.hardlink.error = message;
+      this.bumpHardlinkRetry(x.hardlink);
+      this.store.scheduleSave();
+      // 同一错误只记一次，避免轮询刷日志
+      if (prevError !== message) this.log('error', `补番硬链接失败「${x.name}」：${message}`);
+      return null;
+    };
+    try {
+      const cfg = this.publicHardlinkConfig();
+      let info = [];
+      try {
+        info = await this.qb().torrentsInfo([x.hash]);
+      } catch (e) {
+        return fail(`读取 qBittorrent 任务失败：${e.message}`);
+      }
+      const t = info[0] || null;
+      if (!t) return fail('qBittorrent 中找不到该任务（可能已被删除）');
+      const snapshot = this.qbSnapshot(t, x.name);
+      if (snapshot) x.qb = snapshot;
+      const progress = Number(t.progress) || 0;
+      if (progress < 0.9999) {
+        x.hardlink.error = `等待下载完成（${Math.round(progress * 100)}%）`;
+        x.hardlink.retryAt = 0;
+        this.store.scheduleSave();
+        return { ok: false, notReady: true, error: x.hardlink.error };
+      }
+      let files = [];
+      try {
+        files = await this.qb().torrentsFiles(x.hash);
+      } catch (e) {
+        return fail(`读取种子文件列表失败：${e.message}`);
+      }
+      const result = await hardlink.runHardlink({
+        savePath: String(t.save_path || (x.qb && x.qb.savePath) || ''),
+        destRoot: this.resolveHardlinkDest(x.hardlink.dest, x.name, x.hardlink.season),
+        files,
+        name: x.name,
+        season: Number(x.hardlink.season) || 0,
+        mode: cfg.mode,
+        videoExts: cfg.videoExts,
+        subExts: cfg.subExts,
+        excludeDirs: cfg.excludeDirs,
+        excludeTags: cfg.excludeTags,
+        includeFonts: cfg.includeFonts,
+        rename: !!x.hardlink.rename,
+        renamePattern: cfg.renamePattern,
+        videoOffset: Number(x.hardlink.videoOffset) || 0,
+        subOffset: Number(x.hardlink.subOffset) || 0,
+        extensions: cfg.videoExts,
+        stripRoot: cfg.stripRoot,
+      });
+      const hl = x.hardlink;
+      hl.at = nowMs();
+      hl.files = result.files || 0;
+      hl.videos = result.videos || 0;
+      hl.subs = result.subs || 0;
+      hl.linked = result.linked || 0;
+      hl.existed = result.existed || 0;
+      hl.conflicts = result.conflicts || 0;
+      hl.skipped = result.skipped || 0;
+      hl.bytes = result.bytes || 0;
+      hl.error = result.ok ? '' : (result.error || '硬链接失败');
+      // 没有匹配扩展名的文件时重试也没意义，照样标记完成并留下提示
+      hl.done = !!result.ok || !!result.empty;
+      if (hl.done) {
+        hl.attempts = 0;
+        hl.retryAt = 0;
+        const content = cfg.mode === 'mirror'
+          ? `新建 ${hl.linked} 个${hl.existed ? `，已存在 ${hl.existed} 个` : ''}`
+          : `${hl.videos} 集 + ${hl.subs} 字幕（新建 ${hl.linked}，已存在 ${hl.existed}，跳过 ${hl.conflicts}）`;
+        this.log('info', `补番硬链接「${x.name}」：${content} → ${this.resolveHardlinkDest(hl.dest, x.name, hl.season)}${hl.error ? `（${hl.error}）` : ''}`);
+      } else {
+        this.bumpHardlinkRetry(hl);
+        if (prevError !== hl.error) this.log('error', `补番硬链接失败「${x.name}」：${hl.error}`);
+      }
+      this.store.scheduleSave();
+      return result;
+    } finally {
+      this.hardlinkBusy.delete(x.id);
+    }
+  }
+
+  /** 修改某条补番的硬链接目录 / 季 / 开关 / 偏移（空目录 = 取消硬链接） */
+  updateExtraHardlink(id, input) {
+    const x = this.data.extras.find((e) => e.id === id);
+    if (!x) throw httpError(404, '补番记录不存在', 'EXTRA_NOT_FOUND');
+    const src = input || {};
+    const offset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+    const season = src.season === undefined
+      ? Number(x.hardlink && x.hardlink.season) || 0
+      : Math.max(0, Math.min(999, Math.trunc(Number(src.season) || 0)));
+    const dest = String(src.dest === undefined ? ((x.hardlink && x.hardlink.dest) || '') : (src.dest || '')).trim();
+    if (dest) this.resolveHardlinkDest(dest, x.name, season);
+    if (!x.hardlink) {
+      x.hardlink = {
+        dest: '', season: 0, enabled: true, rename: false, videoOffset: 0, subOffset: 0,
+        done: false, at: 0, files: 0, videos: 0, subs: 0,
+        linked: 0, existed: 0, conflicts: 0, skipped: 0, bytes: 0, error: '', attempts: 0, retryAt: 0,
+      };
+    }
+    const enabled = src.enabled === undefined ? x.hardlink.enabled !== false : !!src.enabled;
+    const rename = src.rename === undefined ? !!x.hardlink.rename : !!src.rename;
+    const videoOffset = src.videoOffset === undefined
+      ? (Number(x.hardlink.videoOffset) || 0) : offset(src.videoOffset);
+    const subOffset = src.subOffset === undefined
+      ? (Number(x.hardlink.subOffset) || 0) : offset(src.subOffset);
+    const changed = dest !== x.hardlink.dest
+      || season !== (Number(x.hardlink.season) || 0)
+      || rename !== !!x.hardlink.rename
+      || videoOffset !== (Number(x.hardlink.videoOffset) || 0)
+      || subOffset !== (Number(x.hardlink.subOffset) || 0);
+    const reenabled = enabled && x.hardlink.enabled === false;
+    if (changed || reenabled) {
+      x.hardlink.dest = dest;
+      x.hardlink.season = season;
+      x.hardlink.rename = rename;
+      x.hardlink.videoOffset = videoOffset;
+      x.hardlink.subOffset = subOffset;
+      x.hardlink.enabled = enabled;
+      x.hardlink.done = false;
+      x.hardlink.at = 0;
+      x.hardlink.files = 0;
+      x.hardlink.videos = 0;
+      x.hardlink.subs = 0;
+      x.hardlink.linked = 0;
+      x.hardlink.existed = 0;
+      x.hardlink.conflicts = 0;
+      x.hardlink.skipped = 0;
+      x.hardlink.bytes = 0;
+      x.hardlink.error = '';
+      x.hardlink.attempts = 0;
+      x.hardlink.retryAt = 0;
+      this.store.save();
+      const shown = dest ? this.resolveHardlinkDest(dest, x.name, season) : '不硬链接';
+      const extraBits = [];
+      if (rename) extraBits.push('重命名');
+      if (videoOffset) extraBits.push(`视频${videoOffset > 0 ? '+' : ''}${videoOffset}`);
+      if (subOffset) extraBits.push(`字幕${subOffset > 0 ? '+' : ''}${subOffset}`);
+      this.log('info', `补番硬链接目标已改为「${shown}」${extraBits.length ? `（${extraBits.join('，')}）` : ''}${enabled ? '' : '，已关闭'}：${x.name}`);
+    } else if (enabled !== (x.hardlink.enabled !== false)) {
+      x.hardlink.enabled = enabled;
+      this.store.save();
+      this.log('info', `补番硬链接已${enabled ? '开启' : '关闭'}：${x.name}`);
+    }
+    return this.publicExtra(x);
+  }
+
+  /** 手动触发某条补番的硬链接 */
+  async linkExtra(id) {
+    const x = this.data.extras.find((e) => e.id === id);
+    if (!x) throw httpError(404, '补番记录不存在', 'EXTRA_NOT_FOUND');
+    if (!x.hardlink || !x.hardlink.dest) throw badRequest('这条补番没有设置硬链接目录', 'HARDLINK_NO_DEST');
+    if (x.hardlink.enabled === false) throw badRequest('这条补番已关闭硬链接（可在铅笔按钮里重新打开）', 'HARDLINK_DISABLED');
+    if (this.hardlinkBusy.has(x.id)) throw httpError(409, '硬链接正在执行，请稍等', 'HARDLINK_BUSY');
+    const result = await this.linkExtraRecord(x);
+    if (!result) throw httpError(409, x.hardlink.error || '硬链接未执行', 'HARDLINK_FAILED');
+    if (result.notReady) throw httpError(409, result.error || '尚未下载完成', 'HARDLINK_NOT_READY');
+    return { ok: !!result.ok, result, extra: this.publicExtra(x) };
+  }
+
+  /** 后台巡检：只处理等着硬链接的记录，避免每轮都拉全部补番状态 */
+  async hardlinkTick() {
+    if (this.hardlinkTicking || !this.data.qb.baseUrl) return;
+    const now = nowMs();
+    const pending = this.data.extras.filter((x) => this.wantsHardlink(x) && now >= Number(x.hardlink.retryAt || 0));
+    if (!pending.length) return;
+    this.hardlinkTicking = true;
+    try {
+      const { error, changed } = await this.refreshExtraQb(pending);
+      if (changed) this.store.scheduleSave();
+      if (!error) await this.autoHardlink(pending);
+    } catch { /* 下一轮再说 */ } finally {
+      this.hardlinkTicking = false;
+    }
   }
 
   async deleteExtra(id, opts) {
@@ -1765,16 +2186,28 @@ class Engine {
     return { ok: true, deletedTorrent };
   }
 
+  /** 轻量状态指纹：启动时间 + 配置 rev + 并发标志，供 /api/state 协商缓存（304） */
+  stateEtag() {
+    return `"${this.startedAt}.${this.store.rev}.${this.checking.size}.${this.queue.length}"`;
+  }
+
+  /** 只构建下载记录列表（/api/downloads 用，避免拉起整个 state） */
+  downloadsPublic(limit) {
+    return sortByNewest(this.data.downloads)
+      .slice(0, Math.min(1000, Math.max(1, Number(limit) || 200)))
+      .map((d) => {
+        const guess = guessEpisode(d.title);
+        return {
+          ...d,
+          episode: guess ? guess.episode : null,
+          episodeLabel: guess ? guess.label : '',
+          episodeKind: guess ? guess.kind : '',
+        };
+      });
+  }
+
   state() {
-    const downloads = sortByNewest(this.data.downloads).slice(0, 200).map((d) => {
-      const guess = guessEpisode(d.title);
-      return {
-        ...d,
-        episode: guess ? guess.episode : null,
-        episodeLabel: guess ? guess.label : '',
-        episodeKind: guess ? guess.kind : '',
-      };
-    });
+    const downloads = this.downloadsPublic(200);
     return {
       app: {
         name: 'anirss',
@@ -1786,6 +2219,7 @@ class Engine {
       },
       qb: this.publicQb(),
       proxy: this.publicProxyConfig(),
+      hardlink: this.publicHardlinkConfig(),
       bases: this.data.bases.map((b) => ({ ...b })),
       paths: this.data.paths.map((p) => ({ ...p })),
       subs: this.data.subs.map((s) => this.publicSub(s)),
@@ -1806,9 +2240,9 @@ class Engine {
       throw badRequest('配置文件内容不是有效的 JSON 对象', 'BAD_IMPORT');
     }
     const src = payload.data && typeof payload.data === 'object' ? payload.data : payload;
-    const keys = ['bases', 'paths', 'subs', 'extras', 'qb', 'proxy'];
+    const keys = ['bases', 'paths', 'subs', 'extras', 'qb', 'proxy', 'hardlink'];
     if (!keys.some((k) => src[k] !== undefined)) {
-      throw badRequest('配置文件里没有可导入的配置项（站点 / 路径 / 追番 / 补番 / 连接）', 'EMPTY_IMPORT');
+      throw badRequest('配置文件里没有可导入的配置项（站点 / 路径 / 追番 / 补番 / 连接 / 硬链接）', 'EMPTY_IMPORT');
     }
 
     const counts = {};
@@ -1827,6 +2261,21 @@ class Engine {
     if (src.proxy && typeof src.proxy === 'object') {
       this.data.proxy = normalizeProxy(src.proxy);
       counts.proxy = 1;
+    }
+    if (src.hardlink && typeof src.hardlink === 'object') {
+      const cur = this.data.hardlink || {};
+      const pick = (key, fallback, max) => String(src.hardlink[key] == null ? (cur[key] == null ? fallback : cur[key]) : src.hardlink[key]).slice(0, max);
+      this.data.hardlink = {
+        mode: (src.hardlink.mode || cur.mode) === 'mirror' ? 'mirror' : 'season',
+        videoExts: pick('videoExts', hardlink.DEFAULT_EXTENSIONS, 300),
+        subExts: pick('subExts', hardlink.DEFAULT_SUB_EXTENSIONS, 300),
+        excludeDirs: pick('excludeDirs', hardlink.DEFAULT_EXCLUDE_DIRS, 600),
+        excludeTags: pick('excludeTags', hardlink.DEFAULT_EXCLUDE_TAGS, 600),
+        includeFonts: src.hardlink.includeFonts === undefined ? !!cur.includeFonts : !!src.hardlink.includeFonts,
+        stripRoot: !!src.hardlink.stripRoot,
+        defaultDest: String(src.hardlink.defaultDest || '').slice(0, 800),
+      };
+      counts.hardlink = 1;
     }
 
     this.store._normalize();
@@ -1859,6 +2308,7 @@ class Engine {
         skipTlsVerify: !!this.data.qb.skipTlsVerify,
       },
       proxy: this.publicProxyConfig(),
+      hardlink: this.publicHardlinkConfig(),
       bases: this.data.bases,
       paths: this.data.paths,
       subs: this.data.subs,

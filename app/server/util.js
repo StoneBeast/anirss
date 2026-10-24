@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 
 const APP_NAME = 'anirss';
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.10.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 anirss/' + APP_VERSION;
 
@@ -159,8 +159,23 @@ function isMagnet(value) {
  * 从文件名 / 种子名 / 磁力名里猜集数。
  * 返回 { episode, from, to, kind, label, source } 或 null。
  * kind：single（单集）、range（合集范围）、special（特别篇/OP/ED 等）
+ *
+ * 结果按标题缓存：state() 每次轮询都会对全部下载记录/补番重新识别，
+ * 同一部番的标题会反复出现，缓存把重复的正则开销省掉。
  */
+const GUESS_CACHE_MAX = 4096;
+const guessCache = new Map();
+
 function guessEpisode(title) {
+  const raw0 = String(title == null ? '' : title);
+  if (guessCache.has(raw0)) return guessCache.get(raw0);
+  const result = guessEpisodeUncached(raw0);
+  if (guessCache.size >= GUESS_CACHE_MAX) guessCache.clear();
+  guessCache.set(raw0, result);
+  return result;
+}
+
+function guessEpisodeUncached(title) {
   const raw = String(title == null ? '' : title)
     .replace(/&#x([0-9a-f]+);/gi, (m, hex) => String.fromCodePoint(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (m, dec) => String.fromCodePoint(Number(dec)))
@@ -187,8 +202,8 @@ function guessEpisode(title) {
   m = /第\s*0*(\d{1,3})\s*[集话話]/.exec(raw);
   if (m && !isNoise(Number(m[1]), m[0])) return single(Number(m[1]), m[0]);
 
-  // EP12 / E12 / - 12 END
-  m = /(?:^|[\s\-_\[\(【])(?:EP|E)\s*0*(\d{1,3})(?:v\d)?(?=[\s\-_\]\)】]|$)/i.exec(raw);
+  // EP12 / E12 / - 12 END（也允许直接跟扩展名，如 EP13.ass）
+  m = /(?:^|[\s\-_\[\(【])(?:EP|E)\s*0*(\d{1,3})(?:v\d)?(?=[\s\-_\]\)】]|\.|$)/i.exec(raw);
   if (m && !isNoise(Number(m[1]), m[0])) return single(Number(m[1]), m[0]);
 
   // 合集范围：01-12 / 01~12
@@ -213,6 +228,14 @@ function guessEpisode(title) {
   while ((m = tail.exec(raw))) {
     const n = Number(m[1]);
     const ctx = raw.slice(Math.max(0, m.index - 12), m.index + m[0].length + 12);
+    if (!isNoise(n, ctx)) return single(n, m[0].trim());
+  }
+
+  // 数字直接跟扩展名：Show - 13.ass / Show 13.mkv / Show - 13v2.ass
+  m = /(?:^|[\s\-_])(\d{1,3})(?:v\d)?\.(?:ass|srt|ssa|vtt|sup|mkv|mp4|m2ts|ts|avi|wmv|flv|mov|rmvb|webm|iso|m4v)$/i.exec(raw);
+  if (m) {
+    const n = Number(m[1]);
+    const ctx = raw.slice(Math.max(0, m.index - 12), m.index + m[0].length);
     if (!isNoise(n, ctx)) return single(n, m[0].trim());
   }
 
@@ -294,6 +317,64 @@ function formatBytes(n) {
   return (v >= 100 ? v.toFixed(0) : v.toFixed(1)) + ' ' + units[i];
 }
 
+/**
+ * 按字节预算的 LRU 缓存（存封面/图片这类 Buffer 对象）。
+ * 单条超预算也至少保留 1 条，避免超大图造成的取用抖动。
+ */
+class ByteLruCache {
+  constructor(maxBytes, maxCount) {
+    this.maxBytes = maxBytes;
+    this.maxCount = maxCount;
+    this.map = new Map();
+    this.bytes = 0;
+  }
+
+  get(key) {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    // 命中即移到队尾（Map 迭代顺序 = 插入顺序）
+    if (this.map.size > 1) {
+      this.map.delete(key);
+      this.map.set(key, entry);
+    }
+    return entry.value;
+  }
+
+  set(key, value, byteLength) {
+    const existing = this.map.get(key);
+    if (existing) {
+      this.bytes -= existing.bytes;
+      this.map.delete(key);
+    }
+    const bytes = Number(byteLength) || 0;
+    this.map.set(key, { value, bytes });
+    this.bytes += bytes;
+    while (this.map.size > 1 && (this.bytes > this.maxBytes || this.map.size > this.maxCount)) {
+      const oldest = this.map.keys().next().value;
+      const removed = this.map.get(oldest);
+      this.bytes -= removed.bytes;
+      this.map.delete(oldest);
+    }
+  }
+
+  delete(key) {
+    const entry = this.map.get(key);
+    if (entry) {
+      this.bytes -= entry.bytes;
+      this.map.delete(key);
+    }
+  }
+
+  keys() {
+    return this.map.keys();
+  }
+
+  clear() {
+    this.map.clear();
+    this.bytes = 0;
+  }
+}
+
 module.exports = {
   APP_NAME,
   APP_VERSION,
@@ -323,4 +404,5 @@ module.exports = {
   todayStart,
   deepMerge,
   formatBytes,
+  ByteLruCache,
 };

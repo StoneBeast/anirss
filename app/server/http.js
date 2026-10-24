@@ -5,6 +5,7 @@ const https = require('https');
 const zlib = require('zlib');
 const { UA, httpError, looksLikeHtml, formatBytes } = require('./util');
 const { getProxy, prepareProxyRequest, proxyError } = require('./proxy');
+const { agentFor } = require('./agents');
 
 const MAX_REDIRECTS = 5;
 
@@ -87,6 +88,7 @@ function fetchBuffer(inputUrl, opts) {
         rejectUnauthorized: options.rejectUnauthorized !== false,
       };
       if (plan && plan.agent !== undefined) reqOptions.agent = plan.agent;
+      else if (!plan) reqOptions.agent = agentFor(u.protocol, options.rejectUnauthorized !== false);
       const onResponse = (res) => {
           const status = res.statusCode || 0;
           if (status >= 300 && status < 400 && res.headers.location) {

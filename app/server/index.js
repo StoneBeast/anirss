@@ -5,9 +5,11 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const urlmod = require('url');
+const zlib = require('zlib');
 
 const { Store } = require('./store');
 const { Engine } = require('./engine');
+const { destroyAll: destroyAgents } = require('./agents');
 const {
   APP_NAME, APP_VERSION, uid, nowMs, httpError, badRequest,
   normalizeBaseUrl, composeUrl, parseBool, truncate,
@@ -111,6 +113,60 @@ function sendBuffer(res, status, buffer, type, extraHeaders) {
   res.end(buffer);
 }
 
+function acceptsGzip(req) {
+  return /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
+}
+
+// /api/state 的构建结果按 ETag 缓存：轮询窗口内数据没变就复用
+// （字符串化 + gzip 只做一次），多标签页/多端同时轮询时共享
+let stateCache = { etag: '', json: null, gz: null };
+
+function stateCacheResponse(req, res, etag) {
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, { ETag: etag, Vary: 'Accept-Encoding' });
+    return res.end();
+  }
+  if (stateCache.etag !== etag) {
+    const json = Buffer.from(JSON.stringify(engine.state()), 'utf8');
+    const gz = zlib.gzipSync(json, { level: 6 });
+    stateCache = { etag, json, gz };
+  }
+  const headers = {
+    'Content-Type': 'application/json; charset=utf-8',
+    ETag: etag,
+    Vary: 'Accept-Encoding',
+  };
+  if (acceptsGzip(req)) {
+    headers['Content-Encoding'] = 'gzip';
+    headers['Content-Length'] = stateCache.gz.length;
+    res.writeHead(200, baseHeaders(headers));
+    return res.end(stateCache.gz);
+  }
+  headers['Content-Length'] = stateCache.json.length;
+  res.writeHead(200, baseHeaders(headers));
+  return res.end(stateCache.json);
+}
+
+/** 大 JSON 响应（/api/state 等）：客户端支持时 gzip 传输，体积降到 1/5 左右 */
+function sendJsonGz(req, res, status, obj, extraHeaders) {
+  const body = Buffer.from(JSON.stringify(obj), 'utf8');
+  const headers = {
+    'Content-Type': 'application/json; charset=utf-8',
+    Vary: 'Accept-Encoding',
+    ...(extraHeaders || {}),
+  };
+  if (acceptsGzip(req)) {
+    const gz = zlib.gzipSync(body, { level: 6 });
+    headers['Content-Encoding'] = 'gzip';
+    headers['Content-Length'] = gz.length;
+    res.writeHead(status, baseHeaders(headers));
+    return res.end(gz);
+  }
+  headers['Content-Length'] = body.length;
+  res.writeHead(status, baseHeaders(headers));
+  return res.end(body);
+}
+
 function readJson(req, limit) {
   const maxBytes = Number(limit) > 0 ? Number(limit) : BODY_LIMIT;
   return new Promise((resolve, reject) => {
@@ -153,7 +209,40 @@ function readJson(req, limit) {
   });
 }
 
-function serveStatic(res, pathname) {
+// 静态文件内存缓存：stat 校验 mtime/size 未变就直接复用，
+// 文本资源额外预压缩一份 gzip；配合 ETag 让浏览器滚动更新时只走 304。
+const STATIC_CACHE = new Map();
+const GZIP_LEVEL = 6;
+
+function staticEtag(st) {
+  return 'W/"' + st.size.toString(36) + '-' + Math.round(st.mtimeMs).toString(36) + '"';
+}
+
+function isCompressibleType(type) {
+  return /^(text\/|application\/(javascript|json))/.test(type) || type === 'image/svg+xml';
+}
+
+function respondStatic(req, res, cached) {
+  const inm = req.headers['if-none-match'];
+  if (inm && String(inm).split(/\s*,\s*/).includes(cached.etag)) {
+    res.writeHead(304, { ETag: cached.etag, Vary: 'Accept-Encoding' });
+    return res.end();
+  }
+  const canGzip = cached.gzip && acceptsGzip(req);
+  const body = canGzip ? cached.gzip : cached.buf;
+  res.writeHead(200, baseHeaders({
+    'Content-Type': cached.contentType,
+    'Content-Length': body.length,
+    ETag: cached.etag,
+    Vary: 'Accept-Encoding',
+    'Cache-Control': cached.isHtml ? 'no-store' : 'no-cache',
+    ...(canGzip ? { 'Content-Encoding': 'gzip' } : {}),
+    ...(cached.isHtml ? { 'Content-Security-Policy': CSP } : {}),
+  }));
+  res.end(body);
+}
+
+function serveStatic(req, res, pathname) {
   let rel = String(pathname || '/').replace(/^\/+/, '');
   if (!rel || rel.endsWith('/')) rel += 'index.html';
   const full = path.resolve(WWW, rel);
@@ -162,14 +251,22 @@ function serveStatic(res, pathname) {
   }
   fs.stat(full, (err, st) => {
     if (err || !st.isFile()) return sendJson(res, 404, { error: 'Not found' });
+    const etag = staticEtag(st);
+    const cached = STATIC_CACHE.get(rel);
+    if (cached && cached.etag === etag) return respondStatic(req, res, cached);
     fs.readFile(full, (readErr, data) => {
       if (readErr) return sendJson(res, 500, { error: '读取静态文件失败' });
       const ext = path.extname(full).toLowerCase();
-      const isHtml = ext === '.html';
-      sendBuffer(res, 200, data, MIME[ext] || 'application/octet-stream', {
-        'Cache-Control': isHtml ? 'no-store' : 'no-cache',
-        ...(isHtml ? { 'Content-Security-Policy': CSP } : {}),
-      });
+      const contentType = MIME[ext] || 'application/octet-stream';
+      const entry = {
+        etag,
+        buf: data,
+        contentType,
+        isHtml: ext === '.html',
+        gzip: isCompressibleType(contentType) ? zlib.gzipSync(data, { level: GZIP_LEVEL }) : null,
+      };
+      STATIC_CACHE.set(rel, entry);
+      respondStatic(req, res, entry);
     });
   });
 }
@@ -210,7 +307,8 @@ async function handleApi(req, res, pathname, query) {
   }
 
   if (pathname === '/api/state' && method === 'GET') {
-    return sendJson(res, 200, engine.state());
+    // 前端每 12 秒轮询：内容没变时用 ETag 返回 304，跳过全量重建、序列化与传输
+    return stateCacheResponse(req, res, engine.stateEtag());
   }
 
   if (pathname === '/api/qb/test' && method === 'POST') {
@@ -279,6 +377,23 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/extras/status' && method === 'POST') {
     return sendJson(res, 200, await engine.extrasStatus());
+  }
+
+  if (pathname === '/api/hardlink' && method === 'PUT') {
+    const body = await readJson(req);
+    return sendJson(res, 200, { ok: true, hardlink: engine.saveHardlink(body) });
+  }
+  if (pathname === '/api/hardlink/probe' && method === 'GET') {
+    return sendJson(res, 200, { ok: true, probe: engine.probeHardlinkPath(query.path) });
+  }
+
+  const extraHardlinkMatch = pathname.match(/^\/api\/extras\/([^/]+)\/hardlink$/);
+  if (extraHardlinkMatch && method === 'POST') {
+    return sendJson(res, 200, await engine.linkExtra(extraHardlinkMatch[1]));
+  }
+  if (extraHardlinkMatch && method === 'PUT') {
+    const body = await readJson(req);
+    return sendJson(res, 200, { ok: true, extra: engine.updateExtraHardlink(extraHardlinkMatch[1], body) });
   }
 
   const extraMatch = pathname.match(/^\/api\/extras\/([^/]+)$/);
@@ -464,7 +579,7 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/downloads' && method === 'GET') {
     const limit = Math.min(1000, Math.max(1, Number(query.limit) || 200));
-    return sendJson(res, 200, { downloads: engine.state().downloads.slice(0, limit) });
+    return sendJsonGz(req, res, 200, { downloads: engine.downloadsPublic(limit) });
   }
 
   if (pathname === '/api/downloads' && method === 'DELETE') {
@@ -550,7 +665,7 @@ function handleRequest(req, res) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return sendJson(res, 405, { error: 'Method not allowed' });
   }
-  return serveStatic(res, pathname);
+  return serveStatic(req, res, pathname);
 }
 
 function start() {
@@ -607,6 +722,8 @@ function start() {
     closing = true;
     console.log(`[anirss] ${signal} received, shutting down`);
     engine.stop();
+    store.flush();
+    destroyAgents();
     for (const s of servers) {
       try { s.close(); } catch { /* ignore */ }
     }
@@ -617,6 +734,8 @@ function start() {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  // 兜底：非常规退出路径（未捕获异常等）也别丢掉排队的配置写入
+  process.on('exit', () => store.flush());
 }
 
 start();

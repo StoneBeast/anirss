@@ -2,6 +2,9 @@
 
 const assert = require('assert');
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { parseFeed, decodeEntities } = require('../app/server/rss');
 const { parseTorrentInfo, magnetInfoHash } = require('../app/server/bencode');
 const { deriveHomeUrl, parseMikanHome, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes, cleanFeedTitle } = require('../app/server/meta');
@@ -15,6 +18,17 @@ let passed = 0;
 function test(name, fn) {
   try {
     fn();
+    passed++;
+    console.log('✓ ' + name);
+  } catch (e) {
+    console.error('✗ ' + name);
+    throw e;
+  }
+}
+
+async function testAsync(name, fn) {
+  try {
+    await fn();
     passed++;
     console.log('✓ ' + name);
   } catch (e) {
@@ -272,4 +286,179 @@ test('番组主页：按字幕组统计真实集数', () => {
   assert.strictEqual(home.subgroups[0].name, '猎户发布组');
 });
 
-console.log(`\n单元测试全部通过（${passed} 项）`);
+test('硬链接：正片/字幕识别与规划', () => {
+  const { parseExtensions, extensionOf, safeRelPath, planSeason, planMirror, probePath } = require('../app/server/hardlink');
+  assert.deepStrictEqual([...parseExtensions('MKV, mp4、.ts  srt\n.avi')].sort(), ['avi', 'mkv', 'mp4', 'srt', 'ts']);
+  assert.strictEqual(extensionOf('a/b/C.MKV'), 'mkv');
+  assert.strictEqual(extensionOf('README'), '');
+  assert.strictEqual(safeRelPath('../../etc/passwd'), 'etc/passwd');
+  assert.strictEqual(safeRelPath('a//b/./c.mkv'), 'a/b/c.mkv');
+
+  const files = [
+    { name: 'Show/[VCB-Studio] Show [01][Ma10p_1080p][x265_flac].mkv', size: 100 },
+    { name: 'Show/[VCB-Studio] Show [01][Ma10p_1080p][x265_flac].ass', size: 1 },
+    { name: 'Show/[VCB-Studio] Show [02][Ma10p_1080p][x265_flac].mkv', size: 100 },
+    { name: 'Show/subs/[VCB-Studio] Show [02].ass', size: 1 },
+    { name: 'Show/CDs/[241106] Single/01. flac', size: 10 },
+    { name: 'Show/Scans/01.webp', size: 2 },
+    { name: 'Show/[VCB-Studio] Show [NCOP][Ma10p_1080p].mkv', size: 100 },
+    { name: 'Show/SP/[VCB-Studio] Show [SP01].mkv', size: 100 },
+    { name: 'Show/1080p/[VCB-Studio] Show [01][Ma10p_1080p].mkv', size: 90 },
+  ];
+  const plan = planSeason({ files });
+  assert.deepStrictEqual(plan.episodes, [1, 2]);
+  assert.strictEqual(plan.mains, 2);
+  assert.deepStrictEqual(plan.files.filter((f) => f.kind === 'video').map((f) => f.dest), [
+    '[VCB-Studio] Show [01][Ma10p_1080p][x265_flac].mkv',
+    '[VCB-Studio] Show [02][Ma10p_1080p][x265_flac].mkv',
+  ]);
+  assert.strictEqual(plan.files.filter((f) => f.kind === 'sub').length, 2);
+  assert.strictEqual(plan.stats.excludedDir, 1);
+  assert.strictEqual(plan.stats.excludedTag, 1);
+  assert.strictEqual(plan.stats.duplicate, 1);
+
+  // 剧场版：没有集数时取最浅一层的视频
+  const movie = planSeason({ files: [{ name: 'Movie/xxx 2024/movie.mkv', size: 5 }, { name: 'Movie/xxx 2024/fonts/a.ttf', size: 1 }] });
+  assert.strictEqual(movie.mains, 1);
+  assert.deepStrictEqual(movie.files.map((f) => f.dest), ['movie.mkv']);
+
+  // 镜像模式保持旧行为（包含 NCOP、SP 等全部匹配扩展名的文件）
+  const mirror = planMirror({ files, extensions: 'mkv', stripRoot: true });
+  assert.strictEqual(mirror.prefix, 'Show');
+  assert.ok(mirror.files.some((f) => f.dest === '[VCB-Studio] Show [NCOP][Ma10p_1080p].mkv'));
+
+  // 关掉字幕扩展名后不再链接字幕
+  const noSubs = planSeason({ files, subExts: '' });
+  assert.strictEqual(noSubs.subs, 0);
+
+  // 集数偏移 + 重命名：视频 01–02 偏移到 13–14，字幕 13–14 按目标集数配对
+  const shiftedFiles = [
+    { name: 'Show/[G] Show [01][1080p].mkv', size: 1 },
+    { name: 'Show/[G] Show [02][1080p].mkv', size: 1 },
+    { name: 'Show/[G] Show 13.ass', size: 1 },
+    { name: 'Show/[G] Show 14.ass', size: 1 },
+  ];
+  const shifted = planSeason({
+    files: shiftedFiles,
+    name: '某番剧',
+    rename: true,
+    renamePattern: '${name} - ${episode2}',
+    videoOffset: 12,
+    subOffset: 0,
+  });
+  assert.deepStrictEqual(shifted.episodes, [13, 14]);
+  assert.deepStrictEqual(shifted.files.filter((f) => f.kind === 'video').map((f) => f.dest),
+    ['某番剧 - 13.mkv', '某番剧 - 14.mkv']);
+  assert.deepStrictEqual(shifted.files.filter((f) => f.kind === 'sub').map((f) => f.dest),
+    ['某番剧 - 13.ass', '某番剧 - 14.ass']);
+
+  // 字幕也整体偏移：视频 +12、字幕 +12 时仍按目标集数配对
+  const bothShifted = planSeason({
+    files: [
+      { name: 'Show/[G] Show [01].mkv', size: 1 },
+      { name: 'Show/[G] Show [02].mkv', size: 1 },
+      { name: 'Show/[G] Show [01].ass', size: 1 },
+    ],
+    name: '某番剧',
+    rename: true,
+    videoOffset: 12,
+    subOffset: 12,
+  });
+  assert.deepStrictEqual(bothShifted.files.filter((f) => f.kind === 'sub').map((f) => f.dest),
+    ['某番剧 - 13.ass']);
+
+  // 多份字幕：按语言后缀区分，避免重名冲突
+  const multiSub = planSeason({
+    files: [
+      { name: 'Show/[G] Show [01].mkv', size: 1 },
+      { name: 'Show/[G] Show [01].CHS.ass', size: 1 },
+      { name: 'Show/[G] Show [01].CHT.ass', size: 1 },
+    ],
+    name: '某番剧',
+    rename: true,
+  });
+  assert.deepStrictEqual(multiSub.files.filter((f) => f.kind === 'sub').map((f) => f.dest),
+    ['某番剧 - 01.zh.ass', '某番剧 - 01.zh-Hant.ass']);
+
+  // 目录权限诊断：不存在的深层路径要报到最近的真实目录
+  const probeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-probe-'));
+  const probe = probePath(path.join(probeRoot, 'a', 'b'));
+  assert.strictEqual(probe.nearest, path.resolve(probeRoot));
+  assert.strictEqual(probe.writable, true, JSON.stringify(probe));
+  assert.ok(/可写/.test(probe.message), probe.message);
+  fs.rmSync(probeRoot, { recursive: true, force: true });
+});
+
+(async () => {
+  await testAsync('硬链接：季目录真实文件、幂等与冲突', async () => {
+    const { runHardlink } = require('../app/server/hardlink');
+    const dl = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-dl-'));
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-hl-'));
+    try {
+      const show = path.join(dl, 'Show');
+      fs.mkdirSync(path.join(show, 'CDs'), { recursive: true });
+      fs.mkdirSync(path.join(show, 'subs'), { recursive: true });
+      fs.writeFileSync(path.join(show, '[G] Show [01][1080p].mkv'), Buffer.alloc(1024, 1));
+      fs.writeFileSync(path.join(show, '[G] Show [01][1080p].ass'), 'ass1');
+      fs.writeFileSync(path.join(show, '[G] Show [02][1080p].mkv'), Buffer.alloc(2048, 2));
+      fs.writeFileSync(path.join(show, 'subs', '[G] Show [02].ass'), 'ass2');
+      fs.writeFileSync(path.join(show, 'CDs', '01.flac'), 'flac');
+      const files = [
+        { name: 'Show/[G] Show [01][1080p].mkv', size: 1024 },
+        { name: 'Show/[G] Show [01][1080p].ass', size: 4 },
+        { name: 'Show/[G] Show [02][1080p].mkv', size: 2048 },
+        { name: 'Show/subs/[G] Show [02].ass', size: 4 },
+        { name: 'Show/CDs/01.flac', size: 4 },
+      ];
+      const first = await runHardlink({ savePath: dl, destRoot: dest, files });
+      assert.strictEqual(first.ok, true, JSON.stringify(first));
+      assert.strictEqual(first.videos, 2);
+      assert.strictEqual(first.subs, 2);
+      assert.strictEqual(first.linked, 4);
+      assert.ok(fs.existsSync(path.join(dest, '[G] Show [01][1080p].mkv')));
+      assert.ok(fs.existsSync(path.join(dest, '[G] Show [01][1080p].ass')));
+      assert.ok(fs.existsSync(path.join(dest, '[G] Show [02].ass')));
+      assert.ok(!fs.existsSync(path.join(dest, '01.flac')));
+      assert.strictEqual(fs.statSync(path.join(dl, 'Show', '[G] Show [01][1080p].mkv')).nlink, 2);
+
+      const second = await runHardlink({ savePath: dl, destRoot: dest, files });
+      assert.strictEqual(second.ok, true);
+      assert.strictEqual(second.linked, 0);
+      assert.strictEqual(second.existed, 4);
+
+      // 目标被别的文件占用时不覆盖（先删掉硬链接，再放一个独立文件）
+      const target = path.join(dest, '[G] Show [01][1080p].mkv');
+      fs.rmSync(target);
+      fs.writeFileSync(target, 'other');
+      const third = await runHardlink({ savePath: dl, destRoot: dest, files });
+      assert.strictEqual(third.conflicts, 1);
+      assert.strictEqual(fs.readFileSync(target, 'utf8'), 'other');
+
+      // 目标目录不存在时自动建多层
+      const deep = path.join(dest, 'Lib', 'Show', 'Season 1');
+      const fourth = await runHardlink({ savePath: dl, destRoot: deep, files });
+      assert.strictEqual(fourth.ok, true, JSON.stringify(fourth));
+      assert.ok(fs.existsSync(path.join(deep, '[G] Show [02][1080p].mkv')));
+
+      // 源目录不存在时给出可读错误
+      const bad = await runHardlink({ savePath: path.join(dl, 'nope'), destRoot: dest, files });
+      assert.strictEqual(bad.ok, false);
+      assert.ok(/不存在/.test(bad.error), bad.error);
+
+      // 镜像模式走同一执行器
+      const mirror = await runHardlink({
+        savePath: dl, destRoot: path.join(dest, 'mirror'), files, mode: 'mirror', extensions: 'mkv,ass', stripRoot: true,
+      });
+      assert.strictEqual(mirror.ok, true, JSON.stringify(mirror));
+      assert.ok(fs.existsSync(path.join(dest, 'mirror', 'subs', '[G] Show [02].ass')));
+    } finally {
+      fs.rmSync(dl, { recursive: true, force: true });
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
+  console.log(`\n单元测试全部通过（${passed} 项）`);
+})().catch((e) => {
+  console.error(e && e.stack ? e.stack : e);
+  process.exitCode = 1;
+});

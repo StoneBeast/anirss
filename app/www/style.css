@@ -1539,6 +1539,10 @@ svg { display: block; }
   .tile-name { font-size: 12.5px; min-height: 36px; }
   .extra-card { flex-direction: column; }
   .extra-actions { align-self: flex-end; }
+  .extra-hl { flex-wrap: wrap; }
+  .extra-hl-path { max-width: 100%; }
+  .inline-row { flex-wrap: wrap; }
+  .inline-row .select { flex: 1 1 100%; max-width: none; }
   .search-cover { width: 52px; height: 72px; }
   .sub-meta { gap: 5px; }
   .sub-name { font-size: 13.5px; }
@@ -1973,6 +1977,36 @@ html[data-theme="light"] .tile-foot a { color: #0b83d6; }
 .extra-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .progress { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
 .progress span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #2fb3ff, #6a63ff); transition: width 0.3s ease; }
+.extra-hl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.extra-hl svg { flex: 0 0 auto; opacity: 0.85; }
+.extra-hl-path {
+  min-width: 0;
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.extra-hl-state { color: var(--faint); overflow-wrap: anywhere; }
+.extra-hl.ok { color: #58c98b; }
+.extra-hl.ok .extra-hl-path { color: var(--muted); }
+.extra-hl.warn .extra-hl-state { color: #e0b062; }
+.extra-hl.bad .extra-hl-state { color: #e79aa5; }
+.inline-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.inline-row .select { flex: 0 0 190px; max-width: 190px; }
+.inline-row .input { flex: 1 1 auto; min-width: 0; }
+.inline-row .h-season { flex: 0 0 78px; max-width: 78px; text-align: center; }
+.field-hint.bad { color: #ff8c9c; }
+html[data-theme="light"] .field-hint.bad { color: #b52d43; }
 
 /* ---------------- Search results ---------------- */
 .search-summary { margin: 6px 0 10px; }
@@ -2010,6 +2044,9 @@ html[data-theme="light"] .tile-foot a { color: #0b83d6; }
 .subgroup-chip.hit { border-color: rgba(56, 182, 255, 0.28); background: rgba(56, 182, 255, 0.07); }
 
 html[data-theme='light'] .extra-card { background: #fff; border-color: #e6edf4; }
+html[data-theme='light'] .extra-hl.ok { color: #1f8a52; }
+html[data-theme='light'] .extra-hl.warn .extra-hl-state { color: #96650f; }
+html[data-theme='light'] .extra-hl.bad .extra-hl-state { color: #b52d43; }
 html[data-theme='light'] .progress { background: #eef2f7; }
 html[data-theme='light'] .search-hit { background: #fff; border-color: #e6edf4; }
 html[data-theme='light'] .subgroup-chip { background: #fff; border-color: #e2eaf2; color: #5b7085; }
@@ -2030,3 +2067,12 @@ html[data-theme='light'] .guess-row { background: #fff; border-color: #e6edf4; }
 html[data-theme='light'] .guess-label { background: rgba(11, 131, 214, 0.1); color: #0b83d6; }
 html[data-theme='light'] .guess-label.special { background: rgba(214, 154, 40, 0.14); color: #a4711a; }
 html[data-theme='light'] .guess-label.none { background: #f2f5f8; color: #8a9cad; }
+
+/* ---------------- 渲染性能 ----------------
+   长列表的卡片滚动出视口后跳过布局与绘制（containment），
+   auto 前缀让浏览器记住首次渲染的实际尺寸，回滚时不跳动。 */
+.download-card,
+.feed-item,
+.sub-card,
+.extra-card { content-visibility: auto; contain-intrinsic-size: auto 140px; }
+.sub-tile { content-visibility: auto; contain-intrinsic-size: auto 280px; }

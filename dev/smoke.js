@@ -35,6 +35,7 @@ const qbAdds = [];
 const qbDeletes = [];
 const knownHashes = new Set();
 const qbTorrents = new Map();
+const qbFiles = new Map();
 let rssHits = 0;
 let proxyHits = 0;
 
@@ -122,6 +123,10 @@ async function startQbMock() {
         progress: 0.42, dlspeed: 1024 * 1024, upspeed: 2048,
         state: 'downloading', eta: 300, save_path: '/downloads/anime',
       }]);
+    }
+    if (p === '/api/v2/torrents/files') {
+      const hash = String(u.searchParams.get('hash') || '').toLowerCase();
+      return json(res, qbFiles.get(hash) || []);
     }
     if (p === '/api/v2/torrents/delete') {
       const raw = (await readBody(req)).toString('utf8');
@@ -749,6 +754,171 @@ async function main() {
       '已存在相同种子'
     );
     console.log('✓ 补番：重复种子识别');
+
+    // 补番：下载完成后自动挑正片 + 字幕，平铺到季目录
+    const hlHash = 'e'.repeat(40);
+    const dlRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-smoke-dl-'));
+    const linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-smoke-hl-'));
+    const showDir = path.join(dlRoot, 'Show');
+    fs.mkdirSync(path.join(showDir, 'subs'), { recursive: true });
+    fs.mkdirSync(path.join(showDir, 'CDs'), { recursive: true });
+    fs.mkdirSync(path.join(showDir, 'Scans'), { recursive: true });
+    fs.writeFileSync(path.join(showDir, '[G] Show [01][1080p].mkv'), Buffer.alloc(2048, 7));
+    fs.writeFileSync(path.join(showDir, '[G] Show [01][1080p].ass'), 'ass1');
+    fs.writeFileSync(path.join(showDir, '[G] Show [02][1080p].mkv'), Buffer.alloc(1024, 8));
+    fs.writeFileSync(path.join(showDir, 'subs', '[G] Show [02].ass'), 'ass2');
+    fs.writeFileSync(path.join(showDir, '[G] Show [NCOP][1080p].mkv'), 'ncop');
+    fs.writeFileSync(path.join(showDir, 'CDs', '01.flac'), 'flac');
+    fs.writeFileSync(path.join(showDir, 'Scans', '01.webp'), 'webp');
+    const destTpl = path.join(linkRoot, '${name}', 'Season ${season}');
+    const hlAdd = await api('/api/extras', {
+      method: 'POST',
+      body: {
+        magnet: `magnet:?xt=urn:btih:${hlHash}&dn=Hardlink+Test`,
+        name: 'Hardlink Test',
+        savePath: dlRoot,
+        hardlinkDest: destTpl,
+        season: 1,
+      },
+    });
+    const hlRec = hlAdd.extra;
+    assert.strictEqual(hlRec.hardlink.dest, destTpl);
+    assert.strictEqual(hlRec.hardlink.season, 1);
+    assert.ok(/Hardlink Test[\\/]Season 1$/.test(hlRec.hardlink.destResolved), hlRec.hardlink.destResolved);
+    qbTorrents.set(hlHash, {
+      name: 'Hardlink Test', size: 4096, progress: 1, dlspeed: 0, upspeed: 0,
+      state: 'stalledUP', eta: 0, save_path: dlRoot,
+    });
+    qbFiles.set(hlHash, [
+      { name: 'Show/[G] Show [01][1080p].mkv', size: 2048, progress: 1, priority: 1 },
+      { name: 'Show/[G] Show [01][1080p].ass', size: 4, progress: 1, priority: 1 },
+      { name: 'Show/[G] Show [02][1080p].mkv', size: 1024, progress: 1, priority: 1 },
+      { name: 'Show/subs/[G] Show [02].ass', size: 4, progress: 1, priority: 1 },
+      { name: 'Show/[G] Show [NCOP][1080p].mkv', size: 4, progress: 1, priority: 1 },
+      { name: 'Show/CDs/01.flac', size: 4, progress: 1, priority: 1 },
+      { name: 'Show/Scans/01.webp', size: 4, progress: 1, priority: 1 },
+      { name: 'Show/[G] Show [03][1080p].mkv', size: 100, progress: 0.4, priority: 1 },
+    ]);
+    const hlStatus = await api('/api/extras/status', { method: 'POST', body: {} });
+    const hlDone = hlStatus.extras.find((x) => x.hash === hlHash);
+    assert.ok(hlDone && hlDone.hardlink && hlDone.hardlink.done, JSON.stringify(hlDone && hlDone.hardlink));
+    const seasonDir = path.join(linkRoot, 'Hardlink Test', 'Season 1');
+    assert.strictEqual(hlDone.hardlink.videos, 2);
+    assert.strictEqual(hlDone.hardlink.subs, 2);
+    assert.strictEqual(hlDone.hardlink.linked, 4);
+    assert.ok(fs.existsSync(path.join(seasonDir, '[G] Show [01][1080p].mkv')), '正片应平铺到季目录');
+    assert.ok(fs.existsSync(path.join(seasonDir, '[G] Show [01][1080p].ass')), '同名字幕应一起链接');
+    assert.ok(fs.existsSync(path.join(seasonDir, '[G] Show [02].ass')), 'subs/ 里的同集字幕应匹配');
+    assert.ok(!fs.existsSync(path.join(seasonDir, '01.flac')), 'CDs 应被排除');
+    assert.ok(!fs.existsSync(path.join(seasonDir, '[G] Show [NCOP][1080p].mkv')), 'NCOP 应被排除');
+    assert.ok(!fs.existsSync(path.join(seasonDir, '[G] Show [03][1080p].mkv')), '未下载完的文件不应链接');
+    assert.strictEqual(fs.statSync(path.join(showDir, '[G] Show [01][1080p].mkv')).nlink, 2, '源文件应保持做种');
+    console.log('✓ 补番：自动挑正片 + 字幕到季目录');
+
+    // 手动再跑一次：识别为已存在，不重复创建
+    const hlAgain = await api(`/api/extras/${hlRec.id}/hardlink`, { method: 'POST', body: {} });
+    assert.strictEqual(hlAgain.ok, true, JSON.stringify(hlAgain));
+    assert.strictEqual(hlAgain.result.linked, 0);
+    assert.strictEqual(hlAgain.result.existed, 4);
+    console.log('✓ 补番：硬链接幂等');
+
+    // 集数偏移 + 重命名：视频 01/02 → 13/14，字幕按目标集数配对
+    const renamedRoot = path.join(linkRoot, 'renamed');
+    const renamed = await api(`/api/extras/${hlRec.id}/hardlink`, {
+      method: 'PUT',
+      body: { dest: renamedRoot, rename: true, videoOffset: 12, subOffset: 12 },
+    });
+    assert.strictEqual(renamed.extra.hardlink.rename, true, JSON.stringify(renamed.extra.hardlink));
+    assert.strictEqual(renamed.extra.hardlink.videoOffset, 12);
+    assert.strictEqual(renamed.extra.hardlink.subOffset, 12);
+    const renamedRun = await api(`/api/extras/${hlRec.id}/hardlink`, { method: 'POST', body: {} });
+    assert.strictEqual(renamedRun.ok, true, JSON.stringify(renamedRun));
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 13.mkv')), '视频应重命名为 13');
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 13.ass')), '同名字幕应跟随 13');
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.ass')), 'subs/ 里的 02 集字幕应配对到 14');
+    console.log('✓ 补番：集数偏移 + 重命名');
+
+    // 本次不硬链接：手动触发也会被拒绝，目标模板保留
+    const disabled = await api(`/api/extras/${hlRec.id}/hardlink`, { method: 'PUT', body: { enabled: false } });
+    assert.strictEqual(disabled.extra.hardlink.enabled, false);
+    await expectError(
+      () => api(`/api/extras/${hlRec.id}/hardlink`, { method: 'POST', body: {} }),
+      400,
+      '已关闭'
+    );
+    const reenabled = await api(`/api/extras/${hlRec.id}/hardlink`, {
+      method: 'PUT',
+      body: { enabled: true, rename: false, videoOffset: 0, subOffset: 0 },
+    });
+    assert.strictEqual(reenabled.extra.hardlink.enabled, true);
+    assert.strictEqual(reenabled.extra.hardlink.rename, false);
+    console.log('✓ 补番：本次是否硬链接开关');
+
+    // 修改目标模板与季：旧目录里的链接保留，新目录由手动/巡检补齐
+    const movedRoot = path.join(linkRoot, 'moved');
+    const moved = await api(`/api/extras/${hlRec.id}/hardlink`, {
+      method: 'PUT',
+      body: { dest: path.join(movedRoot, '${name}', 'Season ${season}'), season: 2 },
+    });
+    assert.strictEqual(moved.extra.hardlink.season, 2);
+    assert.strictEqual(moved.extra.hardlink.done, false);
+    assert.ok(/Hardlink Test[\\/]Season 2$/.test(moved.extra.hardlink.destResolved), moved.extra.hardlink.destResolved);
+    const movedRun = await api(`/api/extras/${hlRec.id}/hardlink`, { method: 'POST', body: {} });
+    assert.strictEqual(movedRun.ok, true, JSON.stringify(movedRun));
+    assert.strictEqual(movedRun.result.linked, 4);
+    assert.ok(fs.existsSync(path.join(movedRoot, 'Hardlink Test', 'Season 2', '[G] Show [01][1080p].mkv')));
+    assert.ok(fs.existsSync(path.join(seasonDir, '[G] Show [01][1080p].mkv')), '旧目录里的硬链接应保留');
+    console.log('✓ 补番：修改目标/季后重新链接');
+
+    // 设置：模式、扩展名、排除规则、默认模板
+    const hlCfg = await api('/api/hardlink', {
+      method: 'PUT',
+      body: {
+        mode: 'season', videoExts: 'mkv', subExts: 'ass', excludeDirs: 'cds,scans,sp',
+        excludeTags: 'ncop,sp', includeFonts: false, stripRoot: false, defaultDest: destTpl,
+      },
+    });
+    assert.strictEqual(hlCfg.hardlink.mode, 'season');
+    assert.strictEqual(hlCfg.hardlink.videoExts, 'mkv');
+    assert.strictEqual(hlCfg.hardlink.subExts, 'ass');
+    assert.strictEqual(hlCfg.hardlink.defaultDest, destTpl);
+    const stateHl = (await api('/api/state')).hardlink;
+    assert.strictEqual(stateHl.excludeTags, 'ncop,sp');
+    await expectError(
+      () => api('/api/hardlink', { method: 'PUT', body: { defaultDest: 'relative/path' } }),
+      400,
+      '绝对路径'
+    );
+    console.log('✓ 补番：硬链接设置保存 / 校验');
+
+    // 目录权限检查：用于解释「无法创建目标目录」
+    const probe = await api(`/api/hardlink/probe?path=${encodeURIComponent(dlRoot)}`);
+    assert.strictEqual(probe.probe.exists, true, JSON.stringify(probe));
+    assert.strictEqual(probe.probe.writable, true, JSON.stringify(probe));
+    await expectError(() => api('/api/hardlink/probe?path=relative/path'), 400, '绝对路径');
+    console.log('✓ 补番：目录权限检查');
+
+    // 镜像模式：全部匹配文件 + 去掉种子顶层目录
+    const mirrorDest = path.join(linkRoot, 'mirror');
+    const mirrorCfg = await api('/api/hardlink', { method: 'PUT', body: { mode: 'mirror', stripRoot: true } });
+    assert.strictEqual(mirrorCfg.hardlink.mode, 'mirror');
+    await api(`/api/extras/${hlRec.id}/hardlink`, { method: 'PUT', body: { dest: mirrorDest } });
+    const mirrorRun = await api(`/api/extras/${hlRec.id}/hardlink`, { method: 'POST', body: {} });
+    assert.strictEqual(mirrorRun.ok, true, JSON.stringify(mirrorRun));
+    assert.strictEqual(mirrorRun.result.linked, 3);
+    assert.ok(fs.existsSync(path.join(mirrorDest, '[G] Show [01][1080p].mkv')), 'stripRoot 后应去掉 Show/ 这一层');
+    assert.ok(fs.existsSync(path.join(mirrorDest, '[G] Show [NCOP][1080p].mkv')), '镜像模式不排除 NCOP');
+    console.log('✓ 补番：镜像模式 / 去掉种子顶层目录');
+
+    // 没有设置硬链接目录时手动触发应报错
+    await expectError(
+      () => api(`/api/extras/${extraRec.id}/hardlink`, { method: 'POST', body: {} }),
+      400,
+      '没有设置硬链接目录'
+    );
+    fs.rmSync(dlRoot, { recursive: true, force: true });
+    fs.rmSync(linkRoot, { recursive: true, force: true });
+    console.log('✓ 补番：未设置目标目录时拒绝执行');
 
     // 删除补番记录 / 删除 qB 任务
     const delRes = await api(`/api/extras/${extraRec.id}`, { method: 'DELETE' });

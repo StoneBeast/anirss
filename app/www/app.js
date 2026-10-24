@@ -92,6 +92,12 @@
     loadError: '',
     offlineNotified: false,
     pollTimer: null,
+    etags: new Map(),
+    renderedView: null,
+    viewDirty: false,
+    drafts: {},
+    modalDirty: false,
+    subModalDraft: null,
   };
 
   function esc(value) {
@@ -287,6 +293,37 @@
     return '';
   }
 
+  /** 带 ETag 协商的 GET：内容没变时服务端返回 304，返回 null 表示无需更新 */
+  async function apiCached(pathname) {
+    const headers = {};
+    const etag = S.etags.get(pathname);
+    if (etag) headers['If-None-Match'] = etag;
+    let res;
+    try {
+      res = await fetch(API + String(pathname).replace(/^\/+/, ''), {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+      });
+    } catch {
+      throw new Error('无法连接应用服务，请确认服务仍在运行');
+    }
+    if (res.status === 304) return null;
+    const data = await parseJsonResponse(res);
+    if (res.headers.get('ETag')) S.etags.set(pathname, res.headers.get('ETag'));
+    return data;
+  }
+
+  async function parseJsonResponse(res) {
+    const raw = await res.text();
+    let data = {};
+    if (raw) {
+      try { data = JSON.parse(raw); } catch { throw new Error('应用服务返回了无法解析的响应'); }
+    }
+    if (!res.ok) throw new Error(data.error || `请求失败（HTTP ${res.status}）`);
+    return data;
+  }
+
   async function api(pathname, options) {
     const opts = options || {};
     let res;
@@ -300,13 +337,7 @@
     } catch {
       throw new Error('无法连接应用服务，请确认服务仍在运行');
     }
-    const raw = await res.text();
-    let data = {};
-    if (raw) {
-      try { data = JSON.parse(raw); } catch { throw new Error('应用服务返回了无法解析的响应'); }
-    }
-    if (!res.ok) throw new Error(data.error || `请求失败（HTTP ${res.status}）`);
-    return data;
+    return parseJsonResponse(res);
   }
 
   function toast(message, type, title) {
@@ -403,16 +434,29 @@
   function onRoute() {
     const next = readRoute();
     if (next !== S.view) {
+      // 离开当前页前保存未提交的草稿（页面内表单 + 追番弹窗）
+      if (S.viewDirty) {
+        const el = $('#view');
+        if (el) S.drafts[S.view] = captureViewDraft(el);
+      }
+      const modalDraft = captureSubModalDraft();
       S.view = next;
       S.formDirty = false;
+      S.viewDirty = false;
       S.testResult = null;
       closeLayers();
+      if (modalDraft) S.subModalDraft = modalDraft;
       window.scrollTo({ top: 0, behavior: 'auto' });
     }
     renderChrome();
     renderView();
     if (next === 'overview') loadQbStatus();
     if (next === 'extras') refreshExtrasStatus(null, true);
+    if (next === 'subs' && S.subModalDraft) {
+      const draft = S.subModalDraft;
+      S.subModalDraft = null;
+      openSubModal(draft.id || undefined, { draft });
+    }
   }
 
   function renderChrome() {
@@ -491,12 +535,141 @@
     if (pill) pill.title = tip || '';
   }
 
-  function renderView() {
-    if (!S.data) {
-      if (S.loadError) renderFatal();
-      return;
+  /* ------------------------------------------------------------
+   * 视图重绘时的表单草稿
+   * renderView() 会整体替换 #view 的 HTML；后台轮询（12 秒一次）、
+   * 「刷新状态」、窗口重新可见都会走到这里，不暂存就会把用户刚粘贴的
+   * 磁力链接、名称、分类等清空（v1.7.1 修复）。这里按 id 暂存后还原，
+   * 顺带还原焦点与光标位置，正在输入法组字时则由 refresh 跳过重绘。
+   * ---------------------------------------------------------- */
+
+  const DRAFT_TEXT_TYPES = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'number', 'date', 'time', 'datetime-local']);
+
+  function draftKind(el) {
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA') return 'text';
+    if (tag === 'SELECT') return 'select';
+    if (tag !== 'INPUT') return '';
+    const type = String(el.type || 'text').toLowerCase();
+    if (type === 'file') return 'file';
+    if (type === 'checkbox' || type === 'radio') return 'check';
+    return DRAFT_TEXT_TYPES.has(type) ? 'text' : '';
+  }
+
+  function captureViewDraft(root) {
+    const active = document.activeElement;
+    const fields = [];
+    let focused = null;
+    $$('[id]', root).forEach((el) => {
+      const kind = draftKind(el);
+      if (!kind) return;
+      const item = { id: el.id, kind, value: '', checked: false, files: null };
+      if (kind === 'file') {
+        item.files = Array.from(el.files || []);
+      } else if (kind === 'check') {
+        item.checked = !!el.checked;
+      } else {
+        item.value = el.value;
+      }
+      fields.push(item);
+      if (el === active) {
+        let start = null;
+        let end = null;
+        try {
+          start = el.selectionStart;
+          end = el.selectionEnd;
+        } catch { /* select / number 等没有选区 */ }
+        focused = { id: el.id, start, end };
+      }
+    });
+    return { fields, focused, template: S.view === 'extras' && !!S.subTemplate, templateState: S.view === 'extras' && S.subTemplate ? { id: S.subTemplate.id, values: { ...S.subTemplate.values } } : null };
+  }
+
+  /** 用路径预设 id + 变量值恢复 S.subTemplate（跨页草稿用） */
+  function restoreSubTemplate(state) {
+    if (!state || !state.id) return;
+    const preset = (S.data.paths || []).find((p) => p.id === state.id);
+    if (!preset) return;
+    S.subTemplate = {
+      id: preset.id,
+      name: preset.name,
+      template: preset.path,
+      parsed: parsePathTemplate(preset.path),
+      values: { ...(state.values || {}) },
+    };
+  }
+
+  function restoreViewDraft(root, draft) {    const byId = new Map($$('[id]', root).map((el) => [el.id, el]));
+    draft.fields.forEach((item) => {
+      const el = byId.get(item.id);
+      if (!el) return;
+      if (item.kind === 'file') {
+        if (!item.files || !item.files.length) return;
+        try {
+          const dt = new DataTransfer();
+          item.files.forEach((file) => dt.items.add(file));
+          el.files = dt.files;
+        } catch { /* 浏览器不允许写 FileList 时只能让用户重选 */ }
+        return;
+      }
+      if (item.kind === 'check') {
+        el.checked = item.checked;
+        return;
+      }
+      if (item.kind === 'select') {
+        if ($$('option', el).some((opt) => opt.value === item.value)) el.value = item.value;
+        return;
+      }
+      el.value = item.value;
+    });
+    if (draft.templateState) restoreSubTemplate(draft.templateState);
+    if (draft.template) resumeExtrasForm(root);
+    if (draft.focused) {
+      const el = byId.get(draft.focused.id);
+      if (el && !el.disabled) {
+        try {
+          el.focus({ preventScroll: true });
+          if (draft.focused.start != null && typeof el.setSelectionRange === 'function') {
+            el.setSelectionRange(draft.focused.start, draft.focused.end);
+          }
+        } catch { /* 焦点还原失败不影响重绘结果 */ }
+      }
     }
-    if (S.view === 'connection' && S.formDirty) return;
+  }
+
+  /** 追番弹窗草稿：切换页面时暂存，切回来再原样恢复 */
+  function captureSubModalDraft() {
+    const form = $('#sub-form');
+    if (!form || !S.modalDirty) return null;
+    const read = (id) => {
+      const el = $('#' + id, form);
+      if (!el) return '';
+      return draftKind(el) === 'check' ? !!el.checked : el.value;
+    };
+    return {
+      id: form.dataset.id || '',
+      mode: form.dataset.mode || 'base',
+      values: {
+        name: read('f-name'),
+        baseId: read('f-base'),
+        path: read('f-path'),
+        url: read('f-url'),
+        include: read('f-include'),
+        exclude: read('f-exclude'),
+        ignoreCase: !!read('f-ignorecase'),
+        savePath: read('f-savepath'),
+        category: read('f-category'),
+        tags: read('f-tags'),
+        intervalMin: read('f-interval'),
+        maxPerCheck: read('f-max'),
+        enabled: !!read('f-enabled'),
+      },
+      subTemplate: S.subTemplate ? { id: S.subTemplate.id, values: { ...S.subTemplate.values } } : null,
+      nameTouched: !!S.nameTouched,
+    };
+  }
+
+  function viewHTML(view) {
     const fn = {
       overview: viewOverview,
       subs: viewSubs,
@@ -504,11 +677,123 @@
       downloads: viewDownloads,
       library: viewLibrary,
       connection: viewConnection,
-    }[S.view];
+    }[view];
+    return fn ? fn() : viewOverview();
+  }
+
+  const FORM_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'OPTION']);
+
+  /** 把新 HTML 的属性/文本同步到现有 DOM，保留元素、焦点与输入内容 */
+  function patchNode(node, src) {
+    if (!node || !src) return;
+    if (node.nodeType !== src.nodeType) {
+      node.replaceWith(src.cloneNode(true));
+      return;
+    }
+    if (node.nodeType === 3) {
+      if (node.nodeValue !== src.nodeValue) node.nodeValue = src.nodeValue;
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    if (node.tagName !== src.tagName) {
+      node.replaceWith(src.cloneNode(true));
+      return;
+    }
+    const active = document.activeElement;
+    if (active && node.contains(active)) return; // 正在编辑/聚焦的子树保持原样
+    if (FORM_TAGS.has(node.tagName)) return; // 表单控件不碰，避免清掉未提交内容
+    for (const attr of Array.from(src.attributes)) {
+      if (node.getAttribute(attr.name) !== attr.value) node.setAttribute(attr.name, attr.value);
+    }
+    for (const attr of Array.from(node.attributes)) {
+      if (!src.hasAttribute(attr.name)) node.removeAttribute(attr.name);
+    }
+    patchChildren(node, src);
+  }
+
+  function patchChildren(parent, srcParent) {
+    const kids = Array.from(parent.childNodes);
+    const srcs = Array.from(srcParent.childNodes);
+    const kidEls = kids.filter((k) => k.nodeType === 1);
+    const srcEls = srcs.filter((s) => s.nodeType === 1);
+    const allKeyed = srcEls.length > 0 && srcEls.every((s) => s.hasAttribute('data-key'));
+    const anyKeyed = kidEls.some((k) => k.hasAttribute('data-key'));
+    // 带 data-key 的列表（下载行 / 追番卡片 / 抽屉条目…）：数量或顺序变化时按 key
+    // 复用现有节点，避免整列表重建造成的闪动、封面重载与滚动跳动
+    if (allKeyed && anyKeyed) {
+      const same = kidEls.length === srcEls.length &&
+        kidEls.every((k, i) => k.getAttribute('data-key') === srcEls[i].getAttribute('data-key'));
+      if (!same) {
+        const active = document.activeElement;
+        if (active && parent.contains(active)) return; // 正在编辑的列表等编辑结束再对齐
+        const byKey = new Map(kidEls.map((k) => [k.getAttribute('data-key'), k]));
+        const frag = document.createDocumentFragment();
+        for (const s of srcEls) {
+          const ex = byKey.get(s.getAttribute('data-key'));
+          if (ex) {
+            byKey.delete(s.getAttribute('data-key'));
+            patchNode(ex, s);
+            frag.appendChild(ex);
+          } else {
+            frag.appendChild(s.cloneNode(true));
+          }
+        }
+        parent.replaceChildren(frag); // 剩下的（含多余空白文本节点）一并清掉
+        return;
+      }
+      // 结构一致：落到下面的逐节点比对，不移动任何节点
+    }
+    if (kids.length === srcs.length) {
+      for (let i = 0; i < kids.length; i += 1) patchNode(kids[i], srcs[i]);
+      return;
+    }
+    const active = document.activeElement;
+    if (active && parent.contains(active)) return;
+    const frag = document.createDocumentFragment();
+    srcs.forEach((s) => frag.appendChild(s.cloneNode(true)));
+    parent.replaceChildren(frag);
+  }
+
+  /** 原地更新（后台轮询用）：不重绘整页、不闪、不丢焦点与滚动位置 */
+  function patchView(html) {
+    const view = $('#view');
+    if (!view) return;
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    patchChildren(view, tpl.content);
+  }
+
+  function softRenderView() {
+    if (!S.data) return;
+    const view = $('#view');
+    if (!view) return;
+    if (S.view === 'connection' && S.formDirty) {
+      renderConnectionResult();
+      return;
+    }
+    patchView(viewHTML(S.view));
+  }
+
+  function renderView() {
+    if (!S.data) {
+      if (S.loadError) renderFatal();
+      return;
+    }
+    if (S.view === 'connection' && S.formDirty) return;
     const el = $('#view');
     if (!el) return;
-    el.innerHTML = fn ? fn() : viewOverview();
-    if (S.view === 'extras') initExtrasForm();
+    // 同页重绘时暂存；跨页返回时用离开前保存的草稿
+    const stored = S.drafts[S.view] || null;
+    const draft = stored || (S.viewDirty && S.renderedView === S.view ? captureViewDraft(el) : null);
+    el.innerHTML = viewHTML(S.view);
+    if (S.view === 'extras' && !draft) initExtrasForm();
+    if (draft) {
+      restoreViewDraft(el, draft);
+      S.viewDirty = true;
+      if (S.view === 'connection') S.formDirty = true;
+    }
+    if (S.view === 'extras') updateHardlinkPreview();
+    S.renderedView = S.view;
   }
 
   function renderFatal() {
@@ -845,7 +1130,7 @@
       meta.bgmUrl ? `<a href="${esc(safeUrl(meta.bgmUrl))}" target="_blank" rel="noopener">${icon('external', 11)}Bangumi</a>` : '',
     ].filter(Boolean).join('');
     return `
-      <article class="sub-tile ${s.enabled ? '' : 'disabled'} ${hasError ? 'has-error' : ''}" data-action="preview-sub" data-id="${id}" title="${esc(s.name)}">
+      <article class="sub-tile ${s.enabled ? '' : 'disabled'} ${hasError ? 'has-error' : ''}" data-key="${id}" data-action="preview-sub" data-id="${id}" title="${esc(s.name)}">
         <div class="tile-cover-wrap">
           ${cover}
           <div class="tile-badges">
@@ -887,7 +1172,7 @@
         ${meta.bgmUrl ? `<a href="${esc(safeUrl(meta.bgmUrl))}" target="_blank" rel="noopener">${icon('external', 12)}Bangumi</a>` : ''}
       </div>` : '';
     return `
-      <article class="sub-card ${s.enabled ? '' : 'disabled'} ${hasError ? 'has-error' : ''}">
+      <article class="sub-card ${s.enabled ? '' : 'disabled'} ${hasError ? 'has-error' : ''}" data-key="${esc(s.id)}">
         <div class="sub-head">
           <div class="sub-status ${meta.hasCover ? 'has-cover' : ''}">${cover}</div>
           <div class="sub-main">
@@ -940,15 +1225,27 @@
    * ============================================================ */
 
   function pathTemplatePanelHTML() {
+    const t = S.subTemplate;
+    const name = t ? esc(t.name) : '';
+    const raw = t
+      ? `模板 <code>${esc(t.template)}</code>${t.parsed.count ? ` · 共 ${t.parsed.count} 个空` : ''}${t.parsed.hasName ? ` · <code>${'${name}'}</code> 使用追番名称` : ''}`
+      : '';
+    const vars = t
+      ? t.parsed.indices.map((idx) => `
+          <label class="template-var">
+            <span>变量 ${idx}</span>
+            <input class="input" type="text" data-template-var="${idx}" value="${esc(t.values[idx] || '')}" placeholder="填写第 ${idx} 个空" autocomplete="off" spellcheck="false">
+          </label>`).join('')
+      : '';
     return `
-      <div class="path-template hidden" id="path-template">
+      <div class="path-template ${t ? '' : 'hidden'}" id="path-template">
         <div class="template-head">
-          <span class="template-name" id="path-template-name"></span>
+          <span class="template-name" id="path-template-name">${name}</span>
           <span class="spacer"></span>
           <button class="btn btn-sm btn-ghost" type="button" data-action="path-template-custom">改为自定义</button>
         </div>
-        <div class="template-raw small faint" id="path-template-raw"></div>
-        <div class="template-vars" id="path-template-vars"></div>
+        <div class="template-raw small faint" id="path-template-raw">${raw}</div>
+        <div class="template-vars" id="path-template-vars">${vars}</div>
       </div>`;
   }
 
@@ -997,6 +1294,50 @@
     return `${n} 秒`;
   }
 
+  function hardlinkRowHTML(x) {
+    const h = x.hardlink;
+    if (!h || !h.dest) return '';
+    const target = h.destResolved || h.dest;
+    if (h.enabled === false) {
+      return `<div class="extra-hl"><span class="extra-hl-path" title="${esc(target)}">${esc(target)}</span><span class="extra-hl-state">本次不硬链接（已关闭）</span></div>`;
+    }
+    const progress = Number(x.qb && x.qb.progress) || 0;
+    let cls = '';
+    let state = '';
+    if (h.done) {
+      const bits = [];
+      if (h.videos || h.subs) {
+        const counts = [];
+        if (h.videos) counts.push(`${h.videos} 集`);
+        if (h.subs) counts.push(`${h.subs} 字幕`);
+        bits.push(counts.join(' + '));
+        if (h.linked) bits.push(`新增 ${h.linked}`);
+        if (h.existed) bits.push(`已有 ${h.existed}`);
+      } else {
+        if (h.linked) bits.push(`已链接 ${h.linked} 个文件`);
+        if (h.existed) bits.push(`${h.existed} 个已存在`);
+      }
+      if (h.rename) bits.push('已重命名');
+      if (h.conflicts) bits.push(`${h.conflicts} 个被占用`);
+      if (h.skipped) bits.push(`跳过 ${h.skipped} 个非正片`);
+      if (h.error) {
+        cls = 'warn';
+        state = h.error;
+      } else {
+        cls = h.linked || h.existed ? 'ok' : '';
+        state = bits.join('，') || '没有需要链接的文件';
+      }
+    } else if (h.error && !/等待下载完成/.test(h.error)) {
+      cls = 'bad';
+      state = h.error;
+    } else if (progress >= 0.9999) {
+      state = '下载完成，准备硬链接…';
+    } else {
+      state = `等待下载完成${progress > 0 ? `（${Math.round(progress * 100)}%）` : ''}`;
+    }
+    return `<div class="extra-hl ${cls}">${icon('link', 12)}<span class="extra-hl-path" title="${esc(target)}">${esc(target)}</span><span class="extra-hl-state">${esc(state)}</span></div>`;
+  }
+
   function extraCardHTML(x) {
     const qb = x.qb;
     const pct = qb ? Math.max(0, Math.min(100, Math.round((qb.progress || 0) * 100))) : 0;
@@ -1010,7 +1351,7 @@
       if (qb.state && /download/i.test(qb.state)) meta.push(`<span class="chip">剩余 ${etaText(qb.eta)}</span>`);
     }
     return `
-      <article class="extra-card ${x.ok ? '' : 'failed'}">
+      <article class="extra-card ${x.ok ? '' : 'failed'}" data-key="${esc(x.id)}">
         <div class="extra-main">
           <div class="extra-title-row">
             <span class="extra-name" title="${esc(x.name)}">${esc(x.name)}</span>
@@ -1023,9 +1364,12 @@
           </div>
           <div class="extra-meta">${meta.join('')}</div>
           ${x.ok && qb ? `<div class="progress"><span style="width:${pct}%"></span></div>` : ''}
+          ${hardlinkRowHTML(x)}
           ${x.error ? `<div class="sub-error">${icon('alert', 12)} ${esc(x.error)}</div>` : ''}
         </div>
         <div class="extra-actions">
+          ${x.hardlink && x.hardlink.dest ? `<button class="icon-btn" type="button" data-action="extra-hardlink-edit" data-id="${esc(x.id)}" title="修改硬链接">${icon('edit')}</button>` : ''}
+          ${x.hardlink && x.hardlink.dest && x.hardlink.enabled !== false ? `<button class="icon-btn" type="button" data-action="extra-hardlink" data-id="${esc(x.id)}" title="立即硬链接">${icon('link')}</button>` : ''}
           <button class="icon-btn" type="button" data-action="extra-copy" data-id="${esc(x.id)}" title="复制磁力链接">${icon('copy')}</button>
           <button class="icon-btn" type="button" data-action="extra-delete" data-id="${esc(x.id)}" title="只删除记录">${icon('trash')}</button>
           <button class="icon-btn danger" type="button" data-action="extra-delete-torrent" data-id="${esc(x.id)}" title="删除 qB 任务（含文件）">${icon('x')}</button>
@@ -1037,9 +1381,19 @@
     const d = S.data;
     const extras = d.extras || [];
     const qbOk = !!(d.qb && d.qb.lastTest && d.qb.lastTest.ok);
+    const hp = hardlinkPreviewState();
+    const hl = d.hardlink || {
+      mode: 'season', videoExts: '', subExts: '', excludeDirs: '', excludeTags: '',
+      includeFonts: false, stripRoot: false, renamePattern: '${name} - ${episode2}', defaultDest: '',
+    };
     const presetOptions = [
       '<option value="">自定义 / qBittorrent 默认路径</option>',
       ...d.paths.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} — ${esc(p.path)}</option>`),
+    ].join('');
+    // 硬链接目标直接复用「站点与路径」的预设
+    const hardlinkPresetOptions = [
+      '<option value="">自定义 / 不选预设</option>',
+      ...d.paths.map((p) => `<option value="${esc(p.id)}" data-path="${esc(p.path)}">${esc(p.name)} — ${esc(p.path)}</option>`),
     ].join('');
     return `
       <div class="page-head">
@@ -1116,11 +1470,102 @@
                 <input class="input mono" id="f-savepath" placeholder="留空 = qBittorrent 默认路径" spellcheck="false">
                 <div class="field-hint">与追番共用预设；支持 <code>${'${name}'}</code>（名称）与数字变量。</div>
               </div>
+              <div class="field full">
+                <label class="field-label" for="h-dest">硬链接到 <span class="tip">可选 · 下载完成后自动执行</span></label>
+                <div class="inline-row">
+                  <select class="select" id="h-path-preset" aria-label="硬链接目录预设">${hardlinkPresetOptions}</select>
+                  <input class="input mono" id="h-dest" placeholder="留空 = 不硬链接；可用 ${'${name}'} / ${'${season}'}，例如 /pathb/动画/${'${name}'}/Season ${'${season}'}" spellcheck="false">
+                  <input class="input h-season" id="h-season" type="number" min="0" max="999" step="1" value="1" aria-label="季" title="季">
+                </div>
+                <div class="field-hint">目标可直接选「站点与路径」里的预设；变量 <code>${'${name}'}</code>（名称）、<code>${'${season}'}</code>（季），预设里的数字变量依次按名称、季填充。</div>
+                <div class="field-hint${hp.bad ? ' bad' : ''}" id="h-dest-preview">${esc(hp.text)}</div>
+                <div class="field-hint">
+                  <button class="btn btn-ghost btn-sm" type="button" data-action="hardlink-probe">${icon('search', 12)}检查目录权限</button>
+                </div>
+                <div class="field full">
+                  <label class="check"><input type="checkbox" id="h-enabled" checked><span><strong>下载完成后硬链接</strong><span class="check-hint">这次不想硬链接就取消；目标模板会保留，之后可再打开</span></span></label>
+                </div>
+                <div class="field full">
+                  <label class="check"><input type="checkbox" id="h-rename"><span><strong>按集数重命名</strong><span class="check-hint">用设置里的模板生成「名称 - 集数」；字幕会按目标集数自动改成与视频同名</span></span></label>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="h-voffset">视频集数偏移</label>
+                  <input class="input" id="h-voffset" type="number" min="-999" max="999" step="1" value="0">
+                  <div class="field-hint">下载是 01–12、目标是 13–24 → 填 +12</div>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="h-soffset">字幕集数偏移</label>
+                  <input class="input" id="h-soffset" type="number" min="-999" max="999" step="1" value="0">
+                  <div class="field-hint">字幕本身是 13–24 → 保持 0，会按目标集数和视频配对</div>
+                </div>
+              </div>
             </div>
             ${pathTemplatePanelHTML()}
             <label class="check"><input type="checkbox" id="x-paused"><span><strong>添加后暂停</strong><span class="check-hint">先不开始下载，之后可在 qBittorrent 里手动开始</span></span></label>
             <div class="btn-row">
               <button class="btn btn-primary" type="submit">${icon('magnet')}添加到 qBittorrent</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">硬链接设置</div>
+            <div class="card-sub">补番下载完成后自动把匹配的文件硬链接到目标目录，源文件保留继续做种</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <form id="hardlink-form" class="form" autocomplete="off">
+            <div class="form-grid">
+              <div class="field">
+                <label class="field-label" for="hl-mode">链接内容</label>
+                <select class="select" id="hl-mode">
+                  <option value="season" ${hl.mode === 'mirror' ? '' : 'selected'}>正片 + 字幕（平铺到季目录）</option>
+                  <option value="mirror" ${hl.mode === 'mirror' ? 'selected' : ''}>全部文件（保持种子内相对路径）</option>
+                </select>
+                <div class="field-hint">推荐「正片 + 字幕」：自动跳过 CDs、Scans、NCOP 等</div>
+              </div>
+              <div class="field">
+                <label class="field-label" for="hl-default-dest">默认目标模板 <span class="tip">可选</span></label>
+                <input class="input mono" id="hl-default-dest" value="${esc(hl.defaultDest)}" placeholder="/pathb/动画/${'${name}'}/Season ${'${season}'}" spellcheck="false">
+                <div class="field-hint">新增补番时自动填到「硬链接到」，也可以直接选路径预设</div>
+              </div>
+              <div class="field">
+                <label class="field-label" for="hl-video-exts">视频扩展名</label>
+                <input class="input mono" id="hl-video-exts" value="${esc(hl.videoExts)}" placeholder="mkv,mp4,ts" spellcheck="false">
+              </div>
+              <div class="field">
+                <label class="field-label" for="hl-sub-exts">字幕扩展名</label>
+                <input class="input mono" id="hl-sub-exts" value="${esc(hl.subExts)}" placeholder="ass,srt,ssa" spellcheck="false">
+                <div class="field-hint">同名字幕、或同集数字幕（含 subs/ 目录）会一起链接</div>
+              </div>
+              <div class="field">
+                <label class="field-label" for="hl-rename-pattern">重命名模板 <span class="tip">勾选「按集数重命名」时使用</span></label>
+                <input class="input mono" id="hl-rename-pattern" value="${esc(hl.renamePattern || '${name} - ${episode2}')}" placeholder="${'${name}'} - ${'${episode2}'}" spellcheck="false">
+                <div class="field-hint">变量：<code>${'${name}'}</code>、<code>${'${episode}'}</code>（13）、<code>${'${episode2}'}</code>（补零两位）、<code>${'${season}'}</code>；扩展名会自动保留</div>
+              </div>
+              <div class="field full">
+                <label class="field-label" for="hl-exclude-dirs">排除目录 <span class="tip">目录名整段匹配</span></label>
+                <input class="input mono" id="hl-exclude-dirs" value="${esc(hl.excludeDirs)}" spellcheck="false">
+              </div>
+              <div class="field full">
+                <label class="field-label" for="hl-exclude-tags">排除标签 <span class="tip">文件名方括号里的整词，如 NCOP / SP01</span></label>
+                <input class="input mono" id="hl-exclude-tags" value="${esc(hl.excludeTags)}" spellcheck="false">
+              </div>
+              <div class="field full">
+                <label class="check"><input type="checkbox" id="hl-fonts" ${hl.includeFonts ? 'checked' : ''}><span><strong>连同字体</strong><span class="check-hint">把种子里 fonts/ 下的字体链到「目标/fonts/」，字幕需要字体时勾选</span></span></label>
+              </div>
+              <div class="field full">
+                <label class="check"><input type="checkbox" id="hl-strip" ${hl.stripRoot ? 'checked' : ''}><span><strong>「全部文件」模式去掉种子顶层目录</strong><span class="check-hint">仅当链接内容选「全部文件」时生效</span></span></label>
+              </div>
+              <div class="field full">
+                <div class="field-hint">首次使用请到 fnOS「应用设置 → 访问权限」把 qBittorrent 的下载目录和这里的硬链接目录都加进来（选「读写」），两个目录要在同一存储空间，否则会提示没有权限或无法跨分区。</div>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="btn" type="submit">${icon('check')}保存硬链接设置</button>
             </div>
           </form>
         </div>
@@ -1166,11 +1611,114 @@
     });
   }
 
+  /** 前端版硬链接目标渲染：${name} / ${season}，以及预设里的数字变量（1=名称，其余=季） */
+  function renderHardlinkDest(dest, name, season) {
+    const raw = String(dest || '').trim();
+    if (!raw) return '';
+    const seasonText = Number(season) > 0 ? String(Math.trunc(Number(season))) : '';
+    const show = name || '';
+    let index = 0;
+    return raw
+      .replace(/\$?\{\{\s*name\s*\}\}|\$\{\s*name\s*\}/gi, show)
+      .replace(/\$?\{\{\s*season\s*\}\}|\$\{\s*season\s*\}/gi, seasonText)
+      .replace(/\$?\{\{\s*(\d*)\s*\}\}|\$\{\s*(\d+)\s*\}/g, () => {
+        index += 1;
+        return index === 1 ? show : seasonText;
+      });
+  }
+
+  function hardlinkFormValues() {
+    const form = $('#extra-form');
+    if (!form) return null;
+    return {
+      dest: ($('#h-dest', form)?.value || '').trim(),
+      season: Math.max(0, Math.trunc(Number($('#h-season', form)?.value) || 0)),
+      name: ($('#f-name', form)?.value || '').trim(),
+      enabled: !!$('#h-enabled', form)?.checked,
+      rename: !!$('#h-rename', form)?.checked,
+      videoOffset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-voffset', form)?.value) || 0))),
+      subOffset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-soffset', form)?.value) || 0))),
+    };
+  }
+
+  function hardlinkPreviewState() {
+    const form = $('#extra-form');
+    let dest = '';
+    let name = '';
+    let season = 1;
+    if (form) {
+      dest = ($('#h-dest', form)?.value || '').trim();
+      name = ($('#f-name', form)?.value || '').trim();
+      season = Math.max(0, Math.trunc(Number($('#h-season', form)?.value) || 0));
+    }
+    if (!dest) {
+      return {
+        text: '留空 = 下载完成后不硬链接；可以选择上面的路径预设，或用 ${name}/${season} 拼模板。',
+        bad: false,
+      };
+    }
+    const filled = renderHardlinkDest(dest, name || '〈名称〉', season);
+    const left = /\$\{/.test(filled);
+    const absolute = filled.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filled);
+    return {
+      text: `最终目录：${filled}${left ? '（还有未替换的变量）' : ''}`,
+      bad: left || !absolute,
+    };
+  }
+
+  function updateHardlinkPreview() {
+    const el = $('#h-dest-preview');
+    if (!el) return;
+    const state = hardlinkPreviewState();
+    el.textContent = state.text;
+    el.classList.toggle('bad', state.bad);
+  }
+
+  async function probeHardlinkDest() {
+    const v = hardlinkFormValues();
+    if (!v || !v.dest) {
+      toast('先填写硬链接目标目录', 'warn');
+      return;
+    }
+    const target = renderHardlinkDest(v.dest, v.name || 'x', v.season);
+    const el = $('#h-dest-preview');
+    try {
+      const r = await api('hardlink/probe?path=' + encodeURIComponent(target));
+      const p = (r && r.probe) || {};
+      const text = p.message || '检查完成';
+      if (el) {
+        el.textContent = text;
+        el.classList.toggle('bad', !p.writable);
+      }
+      toast(text, p.writable ? 'success' : 'warn', '目录检查');
+    } catch (e) {
+      if (el) {
+        el.textContent = e.message;
+        el.classList.add('bad');
+      }
+      toast(e.message, 'error', '目录检查');
+    }
+  }
+
   function initExtrasForm() {
     const select = $('#f-path-preset');
     const input = $('#f-savepath');
     if (!select || !input) return;
     const paths = S.data.paths || [];
+    // 硬链接目标：默认用设置里的默认模板，并同步预设下拉
+    const hSelect = $('#h-path-preset');
+    const hInput = $('#h-dest');
+    const hSeason = $('#h-season');
+    if (hSeason && !String(hSeason.value || '').trim()) hSeason.value = '1';
+    if (hSelect && hInput) {
+      if (!hInput.value.trim()) {
+        const def = String((S.data.hardlink && S.data.hardlink.defaultDest) || '');
+        if (def) hInput.value = def;
+      }
+      const matched = paths.find((p) => p.path === hInput.value.trim());
+      hSelect.value = matched ? matched.id : '';
+    }
+    updateHardlinkPreview();
     const def = paths.find((p) => p.isDefault) || null;
     // 补番是一次性任务：默认优先用不带变量的预设，避免每次都填模板变量
     const plain = paths.filter((p) => {
@@ -1181,13 +1729,25 @@
       ? def
       : (plain[0] || def || null);
     if (!preferred) return;
-    select.value = preferred.id;
     const parsed = parsePathTemplate(preferred.path);
     if (parsed.count || parsed.hasName) {
       applyPathPreset(preferred.id);
     } else {
+      clearPathTemplate(true);
+      select.value = preferred.id;
       input.value = preferred.path;
     }
+  }
+
+  /** 重绘后把「套用中的路径模板」接回来：面板、变量输入框与拼出的路径。 */
+  function resumeExtrasForm(root) {
+    const t = S.subTemplate;
+    if (!t) return;
+    const input = $('#f-savepath', root);
+    if (input) input.readOnly = true;
+    renderPathTemplate(root);
+    const select = $('#f-path-preset', root);
+    if (select) select.value = t.id;
   }
 
   function readFileBase64(file) {
@@ -1238,6 +1798,12 @@
       }
       const payload = {
         savePath,
+        hardlinkDest: ($('#h-dest', form)?.value || '').trim(),
+        season: Math.max(0, Math.trunc(Number($('#h-season', form)?.value) || 0)),
+        hardlinkEnabled: !!$('#h-enabled', form)?.checked,
+        rename: !!$('#h-rename', form)?.checked,
+        videoOffset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-voffset', form)?.value) || 0))),
+        subOffset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-soffset', form)?.value) || 0))),
         category: $('#x-category', form)?.value.trim() || '',
         tags: $('#x-tags', form)?.value.trim() || '',
         paused: !!$('#x-paused', form)?.checked,
@@ -1263,6 +1829,11 @@
       }
       if (ok) toast(`已提交 ${ok} 个补番任务`, 'success');
       if (errors.length) toast(errors.slice(0, 2).join('；'), 'error', `有 ${errors.length} 个失败`);
+      // 全部成功才清空草稿：有失败时保留已填内容，方便改完重试
+      if (ok && !errors.length) {
+        S.viewDirty = false;
+        delete S.drafts.extras;
+      }
       await refresh();
       if (ok) await refreshExtrasStatus(null, true);
     });
@@ -1275,7 +1846,7 @@
         if (r && Array.isArray(r.extras)) {
           S.data.extras = r.extras;
           renderChrome();
-          if (S.view === 'extras') renderView();
+          if (S.view === 'extras') softRenderView();
         }
         if (!silent) toast(r && r.error ? `刷新失败：${r.error}` : '补番状态已刷新', r && r.error ? 'error' : 'success');
       } catch (e) {
@@ -1289,11 +1860,14 @@
   async function deleteExtra(id, withTorrent) {
     const x = (S.data.extras || []).find((e) => e.id === id);
     if (!x) return;
+    const keptLinks = x.hardlink && x.hardlink.dest && (x.hardlink.linked || x.hardlink.existed)
+      ? `（已硬链接到「${x.hardlink.dest}」的文件不会被删除，仍会保留）`
+      : '';
     const confirmed = await askConfirm({
       title: withTorrent ? '删除 qB 任务' : '删除补番记录',
       message: withTorrent
-        ? `确定删除「${x.name}」的 qBittorrent 任务（包含已下载文件）并移除记录吗？`
-        : `只删除「${x.name}」的补番记录，qBittorrent 里的任务会保留。`,
+        ? `确定删除「${x.name}」的 qBittorrent 任务（包含已下载文件）并移除记录吗？${keptLinks}`
+        : `只删除「${x.name}」的补番记录，qBittorrent 里的任务会保留。${keptLinks}`,
       confirmText: withTorrent ? '删除任务和文件' : '删除记录',
       danger: true,
     });
@@ -1301,6 +1875,123 @@
     try {
       await api(`extras/${encodeURIComponent(id)}${withTorrent ? '?deleteTorrent=1&deleteFiles=1' : ''}`, { method: 'DELETE' });
       toast(withTorrent ? '已删除 qB 任务和记录' : '已删除补番记录', 'success');
+      await refresh();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function saveHardlinkSettings(form) {
+    const btn = form.querySelector('button[type="submit"]');
+    await withBusy(btn, async () => {
+      const payload = {
+        mode: $('#hl-mode', form)?.value === 'mirror' ? 'mirror' : 'season',
+        videoExts: ($('#hl-video-exts', form)?.value || '').trim(),
+        subExts: ($('#hl-sub-exts', form)?.value || '').trim(),
+        excludeDirs: ($('#hl-exclude-dirs', form)?.value || '').trim(),
+        excludeTags: ($('#hl-exclude-tags', form)?.value || '').trim(),
+        includeFonts: !!$('#hl-fonts', form)?.checked,
+        stripRoot: !!$('#hl-strip', form)?.checked,
+        renamePattern: ($('#hl-rename-pattern', form)?.value || '').trim(),
+        defaultDest: ($('#hl-default-dest', form)?.value || '').trim(),
+      };
+      try {
+        const r = await api('hardlink', { method: 'PUT', body: payload });
+        if (r && r.hardlink) S.data.hardlink = r.hardlink;
+        toast('硬链接设置已保存', 'success');
+        await refresh();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    });
+  }
+
+  async function linkExtraNow(id) {
+    const x = (S.data.extras || []).find((e) => e.id === id);
+    try {
+      const r = await api(`extras/${encodeURIComponent(id)}/hardlink`, { method: 'POST', body: {} });
+      const res = (r && r.result) || {};
+      const bits = [];
+      if (res.linked) bits.push(`新建 ${res.linked} 个`);
+      if (res.existed) bits.push(`${res.existed} 个已存在`);
+      if (res.conflicts) bits.push(`${res.conflicts} 个被占用`);
+      const text = bits.length ? `硬链接完成：${bits.join('，')}` : (res.note || res.error || '硬链接完成');
+      toast(text, res.ok ? 'success' : 'warn', x ? x.name : '');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    await refresh();
+  }
+
+  async function editExtraHardlink(id) {
+    const x = (S.data.extras || []).find((e) => e.id === id);
+    if (!x) return;
+    const h = x.hardlink || {};
+    const values = await askForm({
+      title: '修改硬链接',
+      message: '留空目标 = 不再硬链接这条补番；已经链接过去的文件不会被删除。支持 ${name} / ${season} 变量。',
+      fields: [
+        {
+          key: 'dest',
+          label: '目标目录',
+          value: h.dest || '',
+          placeholder: '/pathb/动画/${name}/Season ${season}',
+          mono: true,
+        },
+        {
+          key: 'season',
+          label: '季',
+          value: String(h.season || 1),
+          type: 'number',
+          hint: '模板里的 ${season} 和预设的第 2 个数字变量会用它填充',
+        },
+        {
+          key: 'enabled',
+          label: '启用硬链接',
+          type: 'check',
+          value: h.enabled !== false,
+          hint: '关闭后不再自动巡检，但目标模板会保留',
+        },
+        {
+          key: 'rename',
+          label: '按集数重命名',
+          type: 'check',
+          value: !!h.rename,
+          hint: '视频和字幕会改成「名称 - 目标集数」并互相同名',
+        },
+        {
+          key: 'videoOffset',
+          label: '视频集数偏移',
+          type: 'number',
+          value: String(h.videoOffset || 0),
+          hint: '例如下载 01–12、目标是 13–24，填 12',
+        },
+        {
+          key: 'subOffset',
+          label: '字幕集数偏移',
+          type: 'number',
+          value: String(h.subOffset || 0),
+          hint: '字幕本身是 13–24 就填 0，会按目标集数和视频配对',
+        },
+      ],
+      confirmText: '保存',
+    });
+    if (!values || typeof values !== 'object') return;
+    const season = Math.max(0, Math.trunc(Number(values.season) || 0));
+    const offset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+    try {
+      await api(`extras/${encodeURIComponent(id)}/hardlink`, {
+        method: 'PUT',
+        body: {
+          dest: values.dest,
+          season,
+          enabled: !!values.enabled,
+          rename: !!values.rename,
+          videoOffset: offset(values.videoOffset),
+          subOffset: offset(values.subOffset),
+        },
+      });
+      toast('硬链接设置已更新', 'success');
       await refresh();
     } catch (e) {
       toast(e.message, 'error');
@@ -1505,7 +2196,7 @@
               <table class="table">
                 <thead><tr><th>条目</th><th>追番</th><th>存储路径</th><th>时间</th><th>状态</th><th class="t-actions">操作</th></tr></thead>
                 <tbody>${list.map((x) => `
-                  <tr>
+                  <tr data-key="${esc(x.id)}">
                     <td>
                       <div class="t-title" title="${esc(x.title)}">${x.episodeLabel ? `<span class="chip accent t-ep">${esc(x.episodeLabel)}</span> ` : ''}${esc(x.title)}</div>
                       ${x.error ? `<div class="t-sub" style="color:#e79aa5;max-width:420px">${esc(x.error)}</div>` : `<div class="t-sub">${esc(x.mode === 'magnet' ? '磁力链接' : x.mode === 'url' ? 'URL 提交' : '种子文件')}</div>`}
@@ -1529,7 +2220,7 @@
 
   function downloadCardHTML(x) {
     return `
-      <div class="download-card">
+      <div class="download-card" data-key="${esc(x.id)}">
         <div class="dc-head">
           ${downloadBadge(x.status)}
           <span class="dc-time">${fmtDate(x.createdAt)}</span>
@@ -1938,6 +2629,7 @@
       try {
         await api('proxy', { method: 'PUT', body });
         S.formDirty = false;
+        S.viewDirty = false;
         await refresh();
         toast('代理设置已保存', 'success');
         await performProxyTest(body);
@@ -1958,11 +2650,21 @@
    * 数据刷新 / qB 状态
    * ============================================================ */
 
-  async function refresh() {
+  /** 用户正在 #view 的文本框里输入（含输入法组字）时，别重绘打断。 */
+  function isEditingView() {
+    const el = document.activeElement;
+    if (!el || !el.tagName) return false;
+    const view = $('#view');
+    if (!view || !view.contains(el)) return false;
+    return draftKind(el) === 'text';
+  }
+
+  async function refresh(options) {
     if (S.refreshing) return;
     S.refreshing = true;
     try {
-      const data = await api('state');
+      const data = await apiCached('state');
+      if (data === null) return; // 304：数据没变，跳过重建与重绘
       S.data = data;
       S.loadError = '';
       if (S.offlineNotified) {
@@ -1970,8 +2672,8 @@
         toast('应用服务已恢复连接', 'success');
       }
       renderChrome();
-      if (S.view !== 'connection' || !S.formDirty) renderView();
-      else renderConnectionResult();
+      if (options && options.soft) softRenderView();
+      else renderView();
     } catch (e) {
       S.loadError = e.message;
       if (!S.data) {
@@ -1994,10 +2696,10 @@
     try {
       const st = await api('qb/status' + (force ? '?force=1' : ''));
       S.qbStatus = st;
-      if (S.view === 'overview') renderView();
+      if (S.view === 'overview') softRenderView();
     } catch (e) {
       S.qbStatus = { ok: false, error: e.message, at: Date.now() };
-      if (S.view === 'overview') renderView();
+      if (S.view === 'overview') softRenderView();
     } finally {
       S.qbLoading = false;
       updateConnectionChrome();
@@ -2056,6 +2758,33 @@
         break;
       case 'extra-delete':
         await deleteExtra(id, false);
+        break;
+      case 'extra-hardlink':
+        await linkExtraNow(id);
+        break;
+      case 'extra-hardlink-edit':
+        await editExtraHardlink(id);
+        break;
+      case 'hardlink-probe':
+        await probeHardlinkDest();
+        break;
+      case 'prompt-yes':
+        resolveConfirm($('#prompt-input') ? $('#prompt-input').value.trim() : '');
+        break;
+      case 'prompt-no':
+        resolveConfirm(false);
+        break;
+      case 'ask-yes': {
+        const values = {};
+        $$('[data-field]').forEach((el) => {
+          if (el.type === 'checkbox') values[el.dataset.field] = !!el.checked;
+          else values[el.dataset.field] = el.value.trim();
+        });
+        resolveConfirm(values);
+        break;
+      }
+      case 'ask-no':
+        resolveConfirm(false);
         break;
       case 'extra-delete-torrent':
         await deleteExtra(id, true);
@@ -2392,6 +3121,7 @@
     if (root) root.innerHTML = '';
     S.modal = null;
     S.subTemplate = null;
+    S.modalDirty = false;
     syncLock();
   }
 
@@ -2441,7 +3171,116 @@
     const fn = S.confirmResolve;
     S.confirmResolve = null;
     closeModal();
-    if (fn) fn(!!value);
+    if (fn) fn(value);
+  }
+
+  /** 单行输入弹窗：返回字符串（可能是空串），取消返回 false */
+  function askPrompt(opts) {
+    return new Promise((resolve) => {
+      S.confirmResolve = resolve;
+      const root = $('#modal-root');
+      if (!root) return resolve(false);
+      root.innerHTML = `
+        <div class="modal-backdrop" data-backdrop="modal">
+          <div class="modal sm" role="dialog" aria-modal="true">
+            <div class="modal-head">
+              <div>
+                <div class="modal-title">${esc(opts.title || '编辑')}</div>
+                <div class="modal-sub">${esc(opts.message || '')}</div>
+              </div>
+              <button class="icon-btn modal-close" type="button" data-action="prompt-no">${icon('x')}</button>
+            </div>
+            <div class="modal-body">
+              <input class="input mono" id="prompt-input" value="${esc(opts.value || '')}" placeholder="${esc(opts.placeholder || '')}" spellcheck="false">
+            </div>
+            <div class="modal-foot">
+              <button class="btn" type="button" data-action="prompt-no">取消</button>
+              <button class="btn btn-primary" type="button" data-action="prompt-yes">${esc(opts.confirmText || '确定')}</button>
+            </div>
+          </div>
+        </div>`;
+      syncLock();
+      setTimeout(() => {
+        const input = $('#prompt-input');
+        if (!input) return;
+        input.focus();
+        input.select();
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            resolveConfirm(input.value.trim());
+          }
+        });
+      }, 40);
+    });
+  }
+
+  /** 多字段弹窗：返回 { key: value }，取消返回 false */
+  function askForm(opts) {
+    return new Promise((resolve) => {
+      S.confirmResolve = resolve;
+      const root = $('#modal-root');
+      if (!root) return resolve(false);
+      const fields = Array.isArray(opts.fields) ? opts.fields : [];
+      const readValues = (root) => {
+        const values = {};
+        $$('[data-field]', root).forEach((el) => {
+          if (el.type === 'checkbox') values[el.dataset.field] = !!el.checked;
+          else values[el.dataset.field] = el.value.trim();
+        });
+        return values;
+      };
+      const html = fields.map((f, i) => {
+        const id = `ask-field-${i}`;
+        if (f.type === 'check') {
+          return `
+          <div class="field">
+            <label class="check"><input type="checkbox" id="${id}" data-field="${esc(f.key)}" ${f.value ? 'checked' : ''}><span><strong>${esc(f.label || '')}</strong>${f.hint ? `<span class="check-hint">${esc(f.hint)}</span>` : ''}</span></label>
+          </div>`;
+        }
+        const type = f.type === 'number' ? 'number' : 'text';
+        return `
+          <div class="field">
+            <label class="field-label" for="${id}">${esc(f.label || '')}</label>
+            <input class="input${f.mono === false ? '' : ' mono'}" id="${id}" data-field="${esc(f.key)}" type="${type}"
+              value="${esc(f.value == null ? '' : f.value)}" placeholder="${esc(f.placeholder || '')}"
+              ${type === 'number' ? 'min="-999" max="999" step="1"' : ''} spellcheck="false">
+            ${f.hint ? `<div class="field-hint">${esc(f.hint)}</div>` : ''}
+          </div>`;
+      }).join('');
+      root.innerHTML = `
+        <div class="modal-backdrop" data-backdrop="modal">
+          <div class="modal sm" role="dialog" aria-modal="true">
+            <div class="modal-head">
+              <div>
+                <div class="modal-title">${esc(opts.title || '编辑')}</div>
+                <div class="modal-sub">${esc(opts.message || '')}</div>
+              </div>
+              <button class="icon-btn modal-close" type="button" data-action="ask-no">${icon('x')}</button>
+            </div>
+            <div class="modal-body"><div class="form" id="ask-form">${html}</div></div>
+            <div class="modal-foot">
+              <button class="btn" type="button" data-action="ask-no">取消</button>
+              <button class="btn btn-primary" type="button" data-action="ask-yes">${esc(opts.confirmText || '保存')}</button>
+            </div>
+          </div>
+        </div>`;
+      syncLock();
+      setTimeout(() => {
+        const first = $('[data-field]:not([type=checkbox])', root);
+        if (first) {
+          first.focus();
+          first.select();
+        }
+        $$('[data-field]', root).forEach((el) => {
+          el.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            resolveConfirm(readValues(root));
+          });
+        });
+      }, 40);
+    });
   }
 
   function openBaseModal(id) {
@@ -2708,11 +3547,12 @@
     const sub = id ? d.subs.find((s) => s.id === id) : null;
     const opts = options || {};
     const prefill = opts.prefill || null;
+    const draft = opts.draft || null;
     let baseId = sub ? sub.baseId : (prefill && prefill.baseId ? prefill.baseId : (d.bases[0] ? d.bases[0].id : ''));
     if (baseId && !d.bases.some((b) => b.id === baseId)) baseId = '';
     const defaultPreset = d.paths.find((p) => p.isDefault) || null;
     const defaultTemplate = defaultPreset ? parsePathTemplate(defaultPreset.path) : null;
-    const useDefaultTemplate = !sub && !!defaultTemplate && (defaultTemplate.count > 0 || defaultTemplate.hasName);
+    const useDefaultTemplate = !sub && !draft && !!defaultTemplate && (defaultTemplate.count > 0 || defaultTemplate.hasName);
     const defaultPath = useDefaultTemplate ? '' : (defaultPreset ? defaultPreset.path : '');
     const values = sub ? { ...sub } : {
       name: (prefill && prefill.name) || '',
@@ -2729,18 +3569,41 @@
       maxPerCheck: 5,
       enabled: true,
     };
+    if (draft) Object.assign(values, draft.values || {});
     if (opts.example && !values.name) values.name = 'Mikan 示例追番';
     let mode = sub
       ? (sub.baseId && d.bases.some((b) => b.id === sub.baseId) ? 'base' : 'full')
       : (baseId ? 'base' : 'full');
+    if (draft && (draft.mode === 'base' || draft.mode === 'full')) mode = draft.mode;
     if (mode === 'base' && !d.bases.length) mode = 'full';
     S.subTemplate = null;
-    S.nameTouched = !!sub && !prefill;
+    S.nameTouched = draft ? !!draft.nameTouched : (!!sub && !prefill);
     S.nameToken = (S.nameToken || 0) + 1;
     S.lastResolveUrl = '';
+    S.modalDirty = !!draft;
     clearTimeout(S.nameTimer);
     openModal(subFormHTML(values, mode, !!sub), 'sub');
-    if (useDefaultTemplate) {
+    if (draft) {
+      if (draft.subTemplate && draft.subTemplate.id) {
+        const preset = d.paths.find((p) => p.id === draft.subTemplate.id);
+        if (preset) {
+          S.subTemplate = {
+            id: preset.id,
+            name: preset.name,
+            template: preset.path,
+            parsed: parsePathTemplate(preset.path),
+            values: { ...(draft.subTemplate.values || {}) },
+          };
+          const input = $('#f-savepath');
+          if (input) input.readOnly = true;
+          renderPathTemplate();
+          const presetSelect = $('#f-path-preset');
+          if (presetSelect) presetSelect.value = preset.id;
+        }
+      }
+      updateSubUrlPreview();
+      if (S.nameTouched) setNameHint('使用自定义名称');
+    } else if (useDefaultTemplate) {
       activatePathTemplateById(defaultPreset.id);
     } else if (!sub && defaultPreset) {
       const presetSelect = $('#f-path-preset');
@@ -2779,14 +3642,15 @@
     renderPathTemplate();
   }
 
-  function renderPathTemplate() {
+  function renderPathTemplate(root) {
+    const scope = root || document;
     const t = S.subTemplate;
-    const panel = $('#path-template');
+    const panel = $('#path-template', scope);
     if (!t || !panel) return;
     panel.classList.remove('hidden');
-    const name = $('#path-template-name');
+    const name = $('#path-template-name', scope);
     if (name) name.textContent = t.name;
-    const raw = $('#path-template-raw');
+    const raw = $('#path-template-raw', scope);
     if (raw) {
       const bits = [];
       if (t.parsed.count) bits.push(`共 ${t.parsed.count} 个空`);
@@ -2794,7 +3658,7 @@
       bits.push('变量里也可以写 <code>${name}</code>');
       raw.innerHTML = `模板 <code>${esc(t.template)}</code> · ${bits.join(' · ')}`;
     }
-    const vars = $('#path-template-vars');
+    const vars = $('#path-template-vars', scope);
     if (vars) {
       vars.innerHTML = t.parsed.indices.map((idx) => `
         <label class="template-var">
@@ -2802,14 +3666,16 @@
           <input class="input" type="text" data-template-var="${idx}" value="${esc(t.values[idx] || '')}" placeholder="填写第 ${idx} 个空" autocomplete="off" spellcheck="false">
         </label>`).join('');
     }
-    composePathFromTemplate();
+    composePathFromTemplate(scope);
   }
 
-  function composePathFromTemplate() {
+  function composePathFromTemplate(root) {
+    const scope = root || document;
     const t = S.subTemplate;
-    const input = $('#f-savepath');
+    const input = $('#f-savepath', scope);
     if (!t || !input) return;
-    const name = $('#f-name') ? $('#f-name').value : '';
+    const nameInput = $('#f-name', scope);
+    const name = nameInput ? nameInput.value : '';
     const composed = composePathTemplate(t.parsed, t.values, name);
     input.value = composed;
     const pendingVars = t.parsed.indices.some((idx) => !String(t.values[idx] || '').trim());
@@ -3146,6 +4012,9 @@
     const data = d.data;
     const meta = sub.meta || {};
     const items = data ? data.items || [] : [];
+    // 刷新后条目列表重建，把滚动位置带回原处（单条下载后不打断浏览）
+    const prevBody = root.querySelector('.drawer-body');
+    const bodyScroll = prevBody ? prevBody.scrollTop : 0;
     const stats = data ? `
       <div class="drawer-stats">
         <div class="drawer-stat"><strong>${data.total}</strong><small>总条目</small></div>
@@ -3189,6 +4058,8 @@
           </div>
         </aside>
       </div>`;
+    const body = root.querySelector('.drawer-body');
+    if (body && bodyScroll) body.scrollTop = bodyScroll;
     syncLock();
   }
 
@@ -3207,7 +4078,7 @@
       ? `${icon('refresh', 13)}重新下载`
       : canDownload ? `${icon('download', 13)}下载` : '无种子';
     return `
-      <div class="feed-item">
+      <div class="feed-item" data-key="${esc(it.key)}">
         <div class="feed-main">
           <div class="feed-title">${it.link ? `<a href="${esc(safeUrl(it.link))}" target="_blank" rel="noopener">${esc(it.title)}</a>` : esc(it.title)}</div>
           <div class="feed-meta">
@@ -3258,6 +4129,9 @@
     } else if (form.id === 'extra-form') {
       e.preventDefault();
       submitExtras(form);
+    } else if (form.id === 'hardlink-form') {
+      e.preventDefault();
+      saveHardlinkSettings(form);
     } else if (form.id === 'guess-form') {
       e.preventDefault();
       runGuess(form);
@@ -3325,6 +4199,8 @@
       if (values.password) payload.password = values.password;
       await api('qb/config', { method: 'PUT', body: payload });
       S.formDirty = false;
+      S.viewDirty = false;
+      delete S.drafts.connection;
       toast('qBittorrent 设置已保存', 'success');
       try {
         const r = await api('qb/test', {
@@ -3404,6 +4280,9 @@
             toast('追番已创建', 'success');
           }
         }
+        delete S.drafts.subs;
+        S.viewDirty = false;
+        S.subModalDraft = null;
         closeModal();
         await refresh();
         await loadQbStatus(true);
@@ -3417,27 +4296,51 @@
    * 表单联动 / 快捷键 / 初始化
    * ============================================================ */
 
+  // #view 里只要有过输入，就说明有没提交的草稿：重绘时要暂存/还原
+  ['input', 'change'].forEach((type) => {
+    document.addEventListener(type, (e) => {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest('#view')) S.viewDirty = true;
+      if (t.closest('#sub-form')) S.modalDirty = true;
+    }, true);
+  });
+
   document.addEventListener('input', (e) => {
     const t = e.target;
     if (t.closest('#conn-form')) S.formDirty = true;
     if (t.closest('#proxy-form')) S.formDirty = true;
     if (t.id === 'f-base' || t.id === 'f-path' || t.id === 'f-url') updateSubUrlPreview();
     if (t.id === 'f-name') {
-      S.nameTouched = !!t.value.trim();
-      S.nameToken++;
-      clearTimeout(S.nameTimer);
-      setNameHint(S.nameTouched ? '使用自定义名称' : '填写追番地址后会自动获取名称');
-      composePathFromTemplate();
-    }    if (t.id === 'f-include' || t.id === 'f-exclude') validateSubRegex();
+      // 名称提示只属于追番表单，补番页有同 id 的输入框
+      if (t.closest('#sub-form')) {
+        S.nameTouched = !!t.value.trim();
+        S.nameToken++;
+        clearTimeout(S.nameTimer);
+        setNameHint(S.nameTouched ? '使用自定义名称' : '填写追番地址后会自动获取名称');
+      }
+      composePathFromTemplate(t.closest('form') || document);
+      if (t.closest('#extra-form')) updateHardlinkPreview();
+    }
+    if (t.id === 'f-include' || t.id === 'f-exclude') validateSubRegex();
     if (t.id === 'f-savepath' && !S.subTemplate && !t.readOnly) {
-      const presetSelect = $('#f-path-preset');
+      const presetSelect = $('#f-path-preset', t.closest('form') || document);
       if (presetSelect) presetSelect.value = '';
     }
     if (t.dataset && t.dataset.templateVar && S.subTemplate) {
       S.subTemplate.values[Number(t.dataset.templateVar)] = t.value;
-      composePathFromTemplate();
+      composePathFromTemplate(t.closest('form') || document);
     }
     if (t.id === 'path-value') updatePathTemplateHint();
+    if (t.id === 'h-dest' || t.id === 'h-season') {
+      // 手动改了目录就不再对应预设
+      if (t.id === 'h-dest') {
+        const hSelect = $('#h-path-preset');
+        const opt = hSelect && hSelect.selectedOptions ? hSelect.selectedOptions[0] : null;
+        if (opt && opt.dataset && opt.dataset.path && opt.dataset.path !== t.value.trim()) hSelect.value = '';
+      }
+      updateHardlinkPreview();
+    }
   });
 
   document.addEventListener('change', (e) => {
@@ -3449,6 +4352,12 @@
     if (t.closest('#conn-form')) S.formDirty = true;
     if (t.closest('#proxy-form')) S.formDirty = true;
     if (t.id === 'f-base') updateSubUrlPreview();
+    if (t.id === 'h-path-preset') {
+      const opt = t.selectedOptions ? t.selectedOptions[0] : null;
+      const input = $('#h-dest');
+      if (input) input.value = opt && opt.dataset ? (opt.dataset.path || '') : '';
+      updateHardlinkPreview();
+    }
     if (t.id === 'f-path-preset') {
       const value = t.value;
       if (!value) {
@@ -3477,10 +4386,10 @@
     if (e.target.dataset && e.target.dataset.backdrop === 'drawer') closeDrawer();
   });
 
+  let clockEl = null;
   function tickClock() {
-    const el = $('#live-time');
-    if (!el) return;
-    el.textContent = fmtClock(Date.now());
+    if (!clockEl || !clockEl.isConnected) clockEl = $('#live-time');
+    if (clockEl) clockEl.textContent = fmtClock(Date.now());
   }
 
   async function boot() {
@@ -3497,7 +4406,7 @@
     await refresh();
     if (S.view === 'overview') await loadQbStatus();
     S.pollTimer = setInterval(() => {
-      if (document.visibilityState === 'visible') refresh();
+      if (document.visibilityState === 'visible') refresh({ soft: true });
     }, 12000);
     setInterval(() => {
       if (document.visibilityState === 'visible' && S.view === 'overview' && S.data) loadQbStatus();
@@ -3505,7 +4414,7 @@
     window.addEventListener('hashchange', onRoute);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        refresh();
+        refresh({ soft: true });
         loadQbStatus();
       }
     });

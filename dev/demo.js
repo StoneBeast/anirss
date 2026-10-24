@@ -12,18 +12,53 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(ROOT, '..', 'work', 'anirss-demo-data');
+const DOWNLOAD_DIR = path.join(DATA_DIR, 'downloads');
+const LIBRARY_DIR = path.join(DATA_DIR, 'library');
 const QB_PORT = 18080;
 const RSS_PORT = 18081;
 const NOW = Date.now();
+
+const FRIEREN_DIR = '葬送的芙莉莲';
+const FRIEREN_FILE = '[ANi] 葬送的芙莉莲 - 28 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4].mkv';
+const FRIEREN_SUB = '[ANi] 葬送的芙莉莲 - 28 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4].ass';
+const FRIEREN_REL = `${FRIEREN_DIR}/${FRIEREN_FILE}`;
+const FRIEREN_SUB_REL = `${FRIEREN_DIR}/${FRIEREN_SUB}`;
 
 const qbAdds = [];
 const qbDeletes = [];
 
 const DEMO_TORRENTS = {
   ['e1'.padEnd(40, '0')]: { name: '[Lilith-Raws] 药屋少女的呢喃 - 19 [Baha][WEB-DL][1080p][AVC AAC][CHT][MP4]', size: 798_000_000, progress: 0.35, dlspeed: 2_100_000, upspeed: 8_000, state: 'downloading', eta: 360, save_path: '/volume1/media/anime/药屋少女的呢喃' },
-  ['e2'.padEnd(40, '1')]: { name: '[ANi] 葬送的芙莉莲 - 28 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]', size: 1_284_000_000, progress: 1, dlspeed: 0, upspeed: 512_000, state: 'stalledUP', eta: 0, save_path: '/volume1/media/anime/葬送的芙莉莲' },
+  ['e2'.padEnd(40, '1')]: { name: '[ANi] 葬送的芙莉莲 - 28 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]', size: 1_284_000_000, progress: 1, dlspeed: 0, upspeed: 512_000, state: 'stalledUP', eta: 0, save_path: DOWNLOAD_DIR },
   ['e3'.padEnd(40, '2')]: { name: '[SubsPlease] 某剧场版 [1080p][BDRip]', size: 4_600_000_000, progress: 0.08, dlspeed: 0, upspeed: 0, state: 'pausedDL', eta: 0, save_path: '/volume1/media/movies' },
 };
+
+// qBittorrent 的文件列表：演示里让「芙莉莲 28」真实存在，便于演示/验收硬链接
+const DEMO_FILES = {
+  ['e2'.padEnd(40, '1')]: [
+    { name: FRIEREN_REL, size: 1_284_000_000, progress: 1, priority: 1 },
+    { name: FRIEREN_SUB_REL, size: 48_000, progress: 1, priority: 1 },
+    { name: `${FRIEREN_DIR}/CDs/[241106] Single/01.flac`, size: 22_600_000, progress: 1, priority: 1 },
+    { name: `${FRIEREN_DIR}/Scans/01.webp`, size: 12_000_000, progress: 1, priority: 1 },
+    { name: `${FRIEREN_DIR}/cover.jpg`, size: 240_000, progress: 1, priority: 1 },
+    { name: `${FRIEREN_DIR}/info.nfo`, size: 2_400, progress: 1, priority: 1 },
+  ],
+};
+
+/** 演示用：造一份真实下载文件 + 清空上次生成的硬链接目录 */
+function seedDownloadFiles() {
+  fs.rmSync(LIBRARY_DIR, { recursive: true, force: true });
+  fs.rmSync(DOWNLOAD_DIR, { recursive: true, force: true });
+  const show = path.join(DOWNLOAD_DIR, FRIEREN_DIR);
+  fs.mkdirSync(path.join(show, 'CDs', '[241106] Single'), { recursive: true });
+  fs.mkdirSync(path.join(show, 'Scans'), { recursive: true });
+  fs.writeFileSync(path.join(show, FRIEREN_FILE), Buffer.alloc(64 * 1024, 7));
+  fs.writeFileSync(path.join(show, FRIEREN_SUB), 'demo ass');
+  fs.writeFileSync(path.join(show, 'CDs', '[241106] Single', '01.flac'), Buffer.alloc(8 * 1024, 3));
+  fs.writeFileSync(path.join(show, 'Scans', '01.webp'), Buffer.alloc(4 * 1024, 4));
+  fs.writeFileSync(path.join(show, 'cover.jpg'), Buffer.alloc(4 * 1024, 2));
+  fs.writeFileSync(path.join(show, 'info.nfo'), 'demo nfo');
+}
 
 function startServer(handler, port) {
   return new Promise((resolve, reject) => {
@@ -103,6 +138,10 @@ async function startQb() {
         return json(res, wanted.filter((hash) => DEMO_TORRENTS[hash]).map((hash) => ({ hash, ...DEMO_TORRENTS[hash] })));
       }
       return json(res, QB_ACTIVE);
+    }
+    if (p === '/api/v2/torrents/files') {
+      const hash = String(u.searchParams.get('hash') || '').toLowerCase();
+      return json(res, DEMO_FILES[hash] || []);
     }
     if (p === '/api/v2/torrents/delete') {
       const raw = (await readBody(req)).toString('utf8');
@@ -306,6 +345,14 @@ function writeConfig() {
       { id: 'b_mikan', name: 'Mikan', url: 'https://mikanime.tv', note: '蜜柑计划 · 默认站点', createdAt: NOW - 30 * 86400_000 },
       { id: 'b_demo', name: '本地演示 RSS', url: 'http://127.0.0.1:' + RSS_PORT, note: '演示用，含测试条目', createdAt: NOW - 20 * 86400_000 },
     ],
+    hardlink: {
+      mode: 'season',
+      videoExts: 'mkv,mp4,ts',
+      subExts: 'ass,srt',
+      includeFonts: false,
+      stripRoot: false,
+      defaultDest: `${LIBRARY_DIR}/\${name}/Season \${season}`,
+    },
     paths: [
       { id: 'p_template', name: '番剧季度模板', path: '/vol2/1000/media/动画/${{1}}/Season ${{}}', isDefault: true, createdAt: NOW - 2 * 86400_000 },
       { id: 'p_anime', name: '番剧 · 1080P', path: '/volume1/media/anime', isDefault: false, createdAt: NOW - 30 * 86400_000 },
@@ -455,19 +502,36 @@ function writeConfig() {
       },
       {
         id: 'x_demo_2',
-        name: '[ANi] 葬送的芙莉莲 - 28 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]',
+        name: '葬送的芙莉莲',
         source: 'file',
         magnet: '',
         hash: 'e2'.padEnd(40, '1'),
         fileName: 'frieren-28.torrent',
-        savePath: '/volume1/media/anime/葬送的芙莉莲',
+        savePath: DOWNLOAD_DIR,
         category: 'anime',
         tags: '补番,1080p',
         paused: false,
         ok: true,
         error: '',
         createdAt: NOW - 5 * 3600_000,
-        qb: { state: 'stalledUP', progress: 1, size: 1_284_000_000, dlspeed: 0, upspeed: 512_000, eta: 0, savePath: '/volume1/media/anime/葬送的芙莉莲', name: '', at: NOW - 120_000 },
+        qb: { state: 'stalledUP', progress: 1, size: 1_284_000_000, dlspeed: 0, upspeed: 512_000, eta: 0, savePath: DOWNLOAD_DIR, name: '[ANi] 葬送的芙莉莲 - 28 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]', at: NOW - 120_000 },
+        hardlink: {
+          dest: `${LIBRARY_DIR}/\${name}/Season \${season}`,
+          season: 1,
+          done: false,
+          at: 0,
+          files: 0,
+          videos: 0,
+          subs: 0,
+          linked: 0,
+          existed: 0,
+          conflicts: 0,
+          skipped: 0,
+          bytes: 0,
+          error: '',
+          attempts: 0,
+          retryAt: 0,
+        },
       },
       {
         id: 'x_demo_3',
@@ -564,6 +628,7 @@ function writeConfig() {
 
 (async () => {
   writeConfig();
+  seedDownloadFiles();
   const qb = await startQb();
   const rss = await startRss();
   console.log('[demo] mock qBittorrent on http://127.0.0.1:' + QB_PORT);
