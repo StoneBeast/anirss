@@ -1488,7 +1488,7 @@
                   <label class="check"><input type="checkbox" id="h-enabled" checked><span><strong>下载完成后硬链接</strong><span class="check-hint">这次不想硬链接就取消；目标模板会保留，之后可再打开</span></span></label>
                 </div>
                 <div class="field full">
-                  <label class="check"><input type="checkbox" id="h-rename"><span><strong>按集数重命名</strong><span class="check-hint">视频和配对的字幕统一改成「名称 - 目标集数」，让字幕和剧集一一对应</span></span></label>
+                  <label class="check"><input type="checkbox" id="h-rename"><span><strong>按集数重命名</strong><span class="check-hint">视频改成「名称 - 目标集数」；配对的字幕始终跟随视频的最终文件名，与剧集一一对应</span></span></label>
                 </div>
                 <div class="field">
                   <label class="field-label" for="h-voffset">集数偏移（整体）</label>
@@ -2084,7 +2084,7 @@
           label: '按集数重命名',
           type: 'check',
           value: !!h.rename,
-          hint: '视频和配对的字幕统一改成「名称 - 目标集数」，让字幕和剧集一一对应',
+          hint: '视频改成「名称 - 目标集数」；配对的字幕始终跟随视频的最终文件名（文件名完全不同的字幕也会按集数配对并改名）',
         },
         {
           key: 'offset',

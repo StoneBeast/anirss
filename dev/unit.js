@@ -383,6 +383,23 @@ test('硬链接：正片/字幕识别与规划', () => {
   assert.deepStrictEqual(multiSub.files.filter((f) => f.kind === 'sub').map((f) => f.dest),
     ['某番剧 - 01.zh.ass', '某番剧 - 01.zh-Hant.ass']);
 
+  // 字幕重命名与偏移无关：没开重命名、字幕文件名和剧集完全不同时，
+  // 按集数配对后字幕仍会重命名成与剧集最终文件名对应（含目录语言标签）
+  const renamedSubs = planSeason({
+    files: [
+      { name: 'Show/[G] Show [01][1080p].mkv', size: 1 },
+      { name: 'Show/[G] Show [02][1080p].mkv', size: 1 },
+      { name: 'Show/subs/第01话.ass', size: 1 },
+      { name: 'Show/chs/02.ass', size: 1 },
+      { name: 'Show/cht/02.ass', size: 1 },
+    ],
+  });
+  assert.deepStrictEqual(renamedSubs.files.filter((f) => f.kind === 'sub').map((f) => f.dest), [
+    '[G] Show [01][1080p].ass',
+    '[G] Show [02][1080p].zh.ass',
+    '[G] Show [02][1080p].zh-Hant.ass',
+  ]);
+
   // 目录权限诊断：不存在的深层路径要报到最近的真实目录
   const probeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-probe-'));
   const probe = probePath(path.join(probeRoot, 'a', 'b'));
@@ -420,7 +437,8 @@ test('硬链接：正片/字幕识别与规划', () => {
       assert.strictEqual(first.linked, 4);
       assert.ok(fs.existsSync(path.join(dest, '[G] Show [01][1080p].mkv')));
       assert.ok(fs.existsSync(path.join(dest, '[G] Show [01][1080p].ass')));
-      assert.ok(fs.existsSync(path.join(dest, '[G] Show [02].ass')));
+      assert.ok(fs.existsSync(path.join(dest, '[G] Show [02][1080p].ass')), 'subs/ 里的字幕应跟随剧集命名');
+      assert.ok(!fs.existsSync(path.join(dest, '[G] Show [02].ass')), '不应保留与剧集不一致的旧字幕名');
       assert.ok(!fs.existsSync(path.join(dest, '01.flac')));
       assert.strictEqual(fs.statSync(path.join(dl, 'Show', '[G] Show [01][1080p].mkv')).nlink, 2);
 

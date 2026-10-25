@@ -381,23 +381,30 @@ function planSeason(input) {
     push(v, dest, 'video');
   }
   for (const s of subs) {
-    const stem = renameStem(s.video);
-    let dest = s.base;
-    if (stem) {
-      const ext = extensionOf(s.rel);
-      const total = subCount.get(s.episode) || 1;
-      const n = (subSeen.get(s.episode) || 0) + 1;
-      subSeen.set(s.episode, n);
-      let tag = subtitleTag(s.base);
+    const v = s.video;
+    const subStem = stemOf(s.rel);
+    // 字幕最终跟随配对视频的「最终文件名」：视频开了重命名跟模板，没开跟原名——
+    // 即使字幕文件名与剧集完全不同，按偏移后的集数配对后也会重命名成对应关系
+    const videoFinalStem = renameStem(v) || (v ? stemOf(v.rel) : subStem);
+    const ext = extensionOf(s.rel);
+    const total = subCount.get(s.episode) || 1;
+    const n = (subSeen.get(s.episode) || 0) + 1;
+    subSeen.set(s.episode, n);
+    let dest;
+    if (subStem === videoFinalStem) {
+      dest = s.base; // 名字本来就与剧集一致，原样保留
+    } else {
+      // 语言标签：先看文件名（CHS/简体…），认不出再看所在目录（chs/cht 常见语言目录）
+      let tag = subtitleTag(s.base) || subtitleTag(dirOf(s.rel).split('/').pop() || '');
       if (total > 1) {
         if (!tag) tag = `sub${n}`;
         const tagKey = `${s.episode}|${tag}`;
         const dup = (tagSeen.get(tagKey) || 0) + 1;
         tagSeen.set(tagKey, dup);
         if (dup > 1) tag = `${tag}${dup}`;
-        dest = `${stem}.${tag}.${ext}`;
+        dest = `${videoFinalStem}.${tag}.${ext}`;
       } else {
-        dest = `${stem}.${ext}`;
+        dest = tag ? `${videoFinalStem}.${tag}.${ext}` : `${videoFinalStem}.${ext}`;
       }
       if (dest !== s.base) stats.renamed++;
     }

@@ -814,7 +814,7 @@ async function main() {
     assert.strictEqual(hlDone.hardlink.linked, 4);
     assert.ok(fs.existsSync(path.join(seasonDir, '[G] Show [01][1080p].mkv')), '正片应平铺到季目录');
     assert.ok(fs.existsSync(path.join(seasonDir, '[G] Show [01][1080p].ass')), '同名字幕应一起链接');
-    assert.ok(fs.existsSync(path.join(seasonDir, '[G] Show [02].ass')), 'subs/ 里的同集字幕应匹配');
+    assert.ok(fs.existsSync(path.join(seasonDir, '[G] Show [02][1080p].ass')), 'subs/ 里的同集字幕应匹配并跟随剧集命名');
     assert.ok(!fs.existsSync(path.join(seasonDir, '01.flac')), 'CDs 应被排除');
     assert.ok(!fs.existsSync(path.join(seasonDir, '[G] Show [NCOP][1080p].mkv')), 'NCOP 应被排除');
     assert.ok(!fs.existsSync(path.join(seasonDir, '[G] Show [03][1080p].mkv')), '未下载完的文件不应链接');
@@ -859,10 +859,11 @@ async function main() {
     assert.deepStrictEqual(subsUp.added.map((s) => s.name), ['chs/02.ass', 'cht/02.ass'], JSON.stringify(subsUp));
     assert.ok(subsUp.skipped.some((s) => s.name === 'readme.txt'), '非字幕文件应被跳过');
     assert.ok(subsUp.link && (subsUp.link.linked + subsUp.link.copied) >= 2, JSON.stringify(subsUp.link));
-    // 同集字幕总数变多后，种子自带字幕也会改用带序号的新名字（sub1），外挂的两份是 sub2/sub3
+    // 同集字幕总数变多后，种子自带字幕也会改用带序号的新名字（sub1）；
+    // 外挂字幕按目录识别语言（chs → zh、cht → zh-Hant），跟随剧集最终文件名
     assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.sub1.ass')), '种子字幕随同集多份改为序号命名');
-    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.sub2.ass')), '外挂字幕应按目标集数配对并加语言序号');
-    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.sub3.ass')), '第二份字幕应有独立命名');
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.zh.ass')), '外挂字幕应按目标集数配对并带语言标签');
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.zh-Hant.ass')), '第二份字幕应有独立语言标签');
     assert.ok(fs.existsSync(path.join(DATA_DIR, 'subtitles', hlRec.id, 'chs', '02.ass')), '字幕应保留压缩包目录层级入库');
     console.log('✓ 补番：字幕 zip 上传自动解压并重新硬链接');
 
