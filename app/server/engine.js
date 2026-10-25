@@ -1937,8 +1937,8 @@ class Engine {
           season: e.hardlink.season || 0,
           enabled: e.hardlink.enabled !== false,
           rename: !!e.hardlink.rename,
-          videoOffset: Number(e.hardlink.videoOffset) || 0,
-          subOffset: Number(e.hardlink.subOffset) || 0,
+          offset: Number(e.hardlink.offset) || 0,
+          subOffset: e.hardlink.subOffset == null ? null : (Number(e.hardlink.subOffset) || 0),
           done: !!e.hardlink.done,
           at: e.hardlink.at || 0,
           files: e.hardlink.files || 0,
@@ -2012,8 +2012,10 @@ class Engine {
       season: Number(src.season) || 0,
       hardlinkEnabled: src.hardlinkEnabled !== false,
       rename: !!src.rename,
-      videoOffset: Number(src.videoOffset) || 0,
-      subOffset: Number(src.subOffset) || 0,
+      offset: Math.max(-999, Math.min(999, Math.trunc(Number(src.offset ?? src.videoOffset) || 0))),
+      subOffset: src.subOffset === undefined || src.subOffset === null || src.subOffset === ''
+        ? null
+        : Math.max(-999, Math.min(999, Math.trunc(Number(src.subOffset) || 0))),
     });
   }
 
@@ -2051,8 +2053,10 @@ class Engine {
       season: Number(src.season) || 0,
       hardlinkEnabled: src.hardlinkEnabled !== false,
       rename: !!src.rename,
-      videoOffset: Number(src.videoOffset) || 0,
-      subOffset: Number(src.subOffset) || 0,
+      offset: Math.max(-999, Math.min(999, Math.trunc(Number(src.offset ?? src.videoOffset) || 0))),
+      subOffset: src.subOffset === undefined || src.subOffset === null || src.subOffset === ''
+        ? null
+        : Math.max(-999, Math.min(999, Math.trunc(Number(src.subOffset) || 0))),
     });
   }
 
@@ -2061,7 +2065,6 @@ class Engine {
     const season = Math.max(0, Math.min(999, Math.trunc(Number(payload.season) || 0)));
     const destTemplate = String(payload.hardlinkDest || '').trim();
     if (destTemplate) this.resolveHardlinkDest(destTemplate, name, season);
-    const offset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
     const rec = {
       id: uid('x_'),
       createdAt: nowMs(),
@@ -2082,8 +2085,10 @@ class Engine {
         season,
         enabled: payload.hardlinkEnabled !== false,
         rename: !!payload.rename,
-        videoOffset: offset(payload.videoOffset),
-        subOffset: offset(payload.subOffset),
+        offset: Math.max(-999, Math.min(999, Math.trunc(Number(payload.offset) || 0))),
+        subOffset: payload.subOffset == null
+          ? null
+          : Math.max(-999, Math.min(999, Math.trunc(Number(payload.subOffset) || 0))),
         done: false,
         at: 0,
         files: 0,
@@ -2264,8 +2269,8 @@ class Engine {
         includeFonts: cfg.includeFonts,
         rename: !!x.hardlink.rename,
         renamePattern: cfg.renamePattern,
-        videoOffset: Number(x.hardlink.videoOffset) || 0,
-        subOffset: Number(x.hardlink.subOffset) || 0,
+        offset: Number(x.hardlink.offset) || 0,
+        subOffset: x.hardlink.subOffset == null ? null : (Number(x.hardlink.subOffset) || 0),
         extensions: cfg.videoExts,
         stripRoot: cfg.stripRoot,
       });
@@ -2300,12 +2305,12 @@ class Engine {
     }
   }
 
-  /** 修改某条补番的硬链接目录 / 季 / 开关 / 偏移（空目录 = 取消硬链接） */
+  /** 修改某条补番的硬链接目录 / 季 / 开关 / 偏移（空目录 = 取消硬链接；subOffset 传空 = 跟随整体偏移） */
   updateExtraHardlink(id, input) {
     const x = this.data.extras.find((e) => e.id === id);
     if (!x) throw httpError(404, '补番记录不存在', 'EXTRA_NOT_FOUND');
     const src = input || {};
-    const offset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+    const clampOffset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
     const season = src.season === undefined
       ? Number(x.hardlink && x.hardlink.season) || 0
       : Math.max(0, Math.min(999, Math.trunc(Number(src.season) || 0)));
@@ -2313,28 +2318,33 @@ class Engine {
     if (dest) this.resolveHardlinkDest(dest, x.name, season);
     if (!x.hardlink) {
       x.hardlink = {
-        dest: '', season: 0, enabled: true, rename: false, videoOffset: 0, subOffset: 0,
+        dest: '', season: 0, enabled: true, rename: false, offset: 0, subOffset: null,
         done: false, at: 0, files: 0, videos: 0, subs: 0,
         linked: 0, existed: 0, conflicts: 0, skipped: 0, bytes: 0, error: '', attempts: 0, retryAt: 0,
       };
     }
     const enabled = src.enabled === undefined ? x.hardlink.enabled !== false : !!src.enabled;
     const rename = src.rename === undefined ? !!x.hardlink.rename : !!src.rename;
-    const videoOffset = src.videoOffset === undefined
-      ? (Number(x.hardlink.videoOffset) || 0) : offset(src.videoOffset);
+    // 整体偏移：接受 offset（新）/ videoOffset（旧）入参；字幕偏移：空串/null = 跟随
+    const offset = (src.offset !== undefined || src.videoOffset !== undefined)
+      ? clampOffset(src.offset !== undefined ? src.offset : src.videoOffset)
+      : (Number(x.hardlink.offset) || 0);
     const subOffset = src.subOffset === undefined
-      ? (Number(x.hardlink.subOffset) || 0) : offset(src.subOffset);
+      ? (x.hardlink.subOffset == null ? null : (Number(x.hardlink.subOffset) || 0))
+      : (src.subOffset === '' || src.subOffset == null ? null : clampOffset(src.subOffset));
+    const curOffset = Number(x.hardlink.offset) || 0;
+    const curSubOffset = x.hardlink.subOffset == null ? null : (Number(x.hardlink.subOffset) || 0);
     const changed = dest !== x.hardlink.dest
       || season !== (Number(x.hardlink.season) || 0)
       || rename !== !!x.hardlink.rename
-      || videoOffset !== (Number(x.hardlink.videoOffset) || 0)
-      || subOffset !== (Number(x.hardlink.subOffset) || 0);
+      || offset !== curOffset
+      || subOffset !== curSubOffset;
     const reenabled = enabled && x.hardlink.enabled === false;
     if (changed || reenabled) {
       x.hardlink.dest = dest;
       x.hardlink.season = season;
       x.hardlink.rename = rename;
-      x.hardlink.videoOffset = videoOffset;
+      x.hardlink.offset = offset;
       x.hardlink.subOffset = subOffset;
       x.hardlink.enabled = enabled;
       x.hardlink.done = false;
@@ -2354,8 +2364,12 @@ class Engine {
       const shown = dest ? this.resolveHardlinkDest(dest, x.name, season) : '不硬链接';
       const extraBits = [];
       if (rename) extraBits.push('重命名');
-      if (videoOffset) extraBits.push(`视频${videoOffset > 0 ? '+' : ''}${videoOffset}`);
-      if (subOffset) extraBits.push(`字幕${subOffset > 0 ? '+' : ''}${subOffset}`);
+      if (offset) extraBits.push(`整体${offset > 0 ? '+' : ''}${offset}`);
+      if (subOffset == null) {
+        if (offset) extraBits.push('字幕跟随整体');
+      } else if (subOffset) {
+        extraBits.push(`字幕${subOffset > 0 ? '+' : ''}${subOffset}`);
+      }
       this.log('info', `补番硬链接目标已改为「${shown}」${extraBits.length ? `（${extraBits.join('，')}）` : ''}${enabled ? '' : '，已关闭'}：${x.name}`);
     } else if (enabled !== (x.hardlink.enabled !== false)) {
       x.hardlink.enabled = enabled;

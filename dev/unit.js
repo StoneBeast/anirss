@@ -346,8 +346,8 @@ test('硬链接：正片/字幕识别与规划', () => {
     name: '某番剧',
     rename: true,
     renamePattern: '${name} - ${episode2}',
-    videoOffset: 12,
-    subOffset: 0,
+    offset: 12,
+    subOffset: 0, // 显式 0：字幕已按目标集数（13–24）命名，不再平移
   });
   assert.deepStrictEqual(shifted.episodes, [13, 14]);
   assert.deepStrictEqual(shifted.files.filter((f) => f.kind === 'video').map((f) => f.dest),
@@ -355,7 +355,7 @@ test('硬链接：正片/字幕识别与规划', () => {
   assert.deepStrictEqual(shifted.files.filter((f) => f.kind === 'sub').map((f) => f.dest),
     ['某番剧 - 13.ass', '某番剧 - 14.ass']);
 
-  // 字幕也整体偏移：视频 +12、字幕 +12 时仍按目标集数配对
+  // 字幕偏移缺省 = 跟随整体偏移：视频 +12，同编号的字幕一起平移并按目标集数配对
   const bothShifted = planSeason({
     files: [
       { name: 'Show/[G] Show [01].mkv', size: 1 },
@@ -364,9 +364,9 @@ test('硬链接：正片/字幕识别与规划', () => {
     ],
     name: '某番剧',
     rename: true,
-    videoOffset: 12,
-    subOffset: 12,
+    offset: 12,
   });
+  assert.strictEqual(bothShifted.subOffsetFollows, true);
   assert.deepStrictEqual(bothShifted.files.filter((f) => f.kind === 'sub').map((f) => f.dest),
     ['某番剧 - 13.ass']);
 
@@ -549,6 +549,36 @@ test('硬链接：正片/字幕识别与规划', () => {
 
     const big = Buffer.alloc(65 * 1024 * 1024);
     assert.throws(() => extractArchive('a.zip', buildZip([{ name: 'big.ass', data: big }])), /64MB/);
+  });
+
+  await testAsync('偏移迁移：videoOffset/subOffset → offset + 跟随语义', async () => {
+    const { Store } = require('../app/server/store');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-mig-'));
+    try {
+      const cfg = {
+        qb: { baseUrl: 'http://127.0.0.1:8080', username: 'u', password: '' },
+        extras: [
+          // 旧记录 A：两个偏移相同（同编号字幕整体平移）→ subOffset 应迁移为跟随（null）
+          { id: 'x_a', name: 'A', source: 'magnet', hash: 'a'.repeat(40), createdAt: 1, hardlink: { dest: '/x/${name}', season: 1, videoOffset: 12, subOffset: 12 } },
+          // 旧记录 B：字幕本身已是目标编号（偏移 0 与视频不同）→ 显式保留 0
+          { id: 'x_b', name: 'B', source: 'magnet', hash: 'b'.repeat(40), createdAt: 1, hardlink: { dest: '/y/${name}', season: 1, videoOffset: 12, subOffset: 0 } },
+          // 旧记录 C：无偏移 → 全部跟随/0
+          { id: 'x_c', name: 'C', source: 'magnet', hash: 'c'.repeat(40), createdAt: 1, hardlink: { dest: '', videoOffset: 0, subOffset: 0 } },
+        ],
+      };
+      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg), 'utf8');
+      const store = new Store(path.join(dir, 'config.json'));
+      const [a, b, c] = store.data.extras;
+      assert.strictEqual(a.hardlink.offset, 12);
+      assert.strictEqual(a.hardlink.subOffset, null, '字幕偏移与视频相同 → 跟随');
+      assert.strictEqual(b.hardlink.offset, 12);
+      assert.strictEqual(b.hardlink.subOffset, 0, '字幕偏移与视频不同 → 显式保留');
+      assert.strictEqual(c.hardlink.offset, 0);
+      assert.strictEqual(c.hardlink.subOffset, null);
+      assert.ok(!('videoOffset' in a.hardlink), '旧字段应被清除');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   console.log(`\n单元测试全部通过（${passed} 项）`);

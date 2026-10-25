@@ -832,11 +832,11 @@ async function main() {
     const renamedRoot = path.join(linkRoot, 'renamed');
     const renamed = await api(`/api/extras/${hlRec.id}/hardlink`, {
       method: 'PUT',
-      body: { dest: renamedRoot, rename: true, videoOffset: 12, subOffset: 12 },
+      body: { dest: renamedRoot, rename: true, offset: 12 },
     });
     assert.strictEqual(renamed.extra.hardlink.rename, true, JSON.stringify(renamed.extra.hardlink));
-    assert.strictEqual(renamed.extra.hardlink.videoOffset, 12);
-    assert.strictEqual(renamed.extra.hardlink.subOffset, 12);
+    assert.strictEqual(renamed.extra.hardlink.offset, 12);
+    assert.strictEqual(renamed.extra.hardlink.subOffset, null, '字幕偏移缺省应表示「跟随整体偏移」');
     const renamedRun = await api(`/api/extras/${hlRec.id}/hardlink`, { method: 'POST', body: {} });
     assert.strictEqual(renamedRun.ok, true, JSON.stringify(renamedRun));
     assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 13.mkv')), '视频应重命名为 13');
@@ -899,7 +899,7 @@ async function main() {
     );
     const reenabled = await api(`/api/extras/${hlRec.id}/hardlink`, {
       method: 'PUT',
-      body: { enabled: true, rename: false, videoOffset: 0, subOffset: 0 },
+      body: { enabled: true, rename: false, offset: 0 },
     });
     assert.strictEqual(reenabled.extra.hardlink.enabled, true);
     assert.strictEqual(reenabled.extra.hardlink.rename, false);

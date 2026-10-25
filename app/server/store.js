@@ -183,13 +183,21 @@ class Store {
           .filter((s) => s.name && !s.name.split('/').includes('..'))
         : [];
       const hl = x.hardlink && typeof x.hardlink === 'object' ? x.hardlink : {};
+      const clampOffset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+      // 1.11 及更早的记录只有 videoOffset/subOffset 两个数字；
+      // 迁移为「整体 offset + 可选字幕偏移」：字幕偏移和视频相同 → 视为跟随（null）
+      const legacyVideoOffset = clampOffset(hl.videoOffset);
+      const legacySubOffset = clampOffset(hl.subOffset);
+      const isNewFormat = hl.offset !== undefined;
       x.hardlink = {
         dest: String(hl.dest || ''),
         season: Math.max(0, Math.min(999, Number(hl.season) || 0)),
         enabled: hl.enabled !== false,
         rename: !!hl.rename,
-        videoOffset: Math.max(-999, Math.min(999, Number(hl.videoOffset) || 0)),
-        subOffset: Math.max(-999, Math.min(999, Number(hl.subOffset) || 0)),
+        offset: isNewFormat ? clampOffset(hl.offset) : legacyVideoOffset,
+        subOffset: isNewFormat
+          ? (hl.subOffset == null || hl.subOffset === '' ? null : clampOffset(hl.subOffset))
+          : (legacySubOffset === legacyVideoOffset ? null : legacySubOffset),
         done: !!hl.done,
         at: Number(hl.at) || 0,
         files: Number(hl.files) || 0,

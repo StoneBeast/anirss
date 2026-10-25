@@ -1488,17 +1488,17 @@
                   <label class="check"><input type="checkbox" id="h-enabled" checked><span><strong>下载完成后硬链接</strong><span class="check-hint">这次不想硬链接就取消；目标模板会保留，之后可再打开</span></span></label>
                 </div>
                 <div class="field full">
-                  <label class="check"><input type="checkbox" id="h-rename"><span><strong>按集数重命名</strong><span class="check-hint">用设置里的模板生成「名称 - 集数」；字幕会按目标集数自动改成与视频同名</span></span></label>
+                  <label class="check"><input type="checkbox" id="h-rename"><span><strong>按集数重命名</strong><span class="check-hint">视频和配对的字幕统一改成「名称 - 目标集数」，让字幕和剧集一一对应</span></span></label>
                 </div>
                 <div class="field">
-                  <label class="field-label" for="h-voffset">视频集数偏移</label>
+                  <label class="field-label" for="h-voffset">集数偏移（整体）</label>
                   <input class="input" id="h-voffset" type="number" min="-999" max="999" step="1" value="0">
-                  <div class="field-hint">下载是 01–12、目标是 13–24 → 填 +12</div>
+                  <div class="field-hint">下载是 01–12、目标是 13–24 → 填 +12；视频和字幕一起平移</div>
                 </div>
                 <div class="field">
-                  <label class="field-label" for="h-soffset">字幕集数偏移</label>
-                  <input class="input" id="h-soffset" type="number" min="-999" max="999" step="1" value="0">
-                  <div class="field-hint">字幕本身是 13–24 → 保持 0，会按目标集数和视频配对</div>
+                  <label class="field-label" for="h-soffset">字幕偏移 <span class="tip">可选 · 一般留空</span></label>
+                  <input class="input" id="h-soffset" type="number" min="-999" max="999" step="1" value="" placeholder="留空 = 跟随整体偏移">
+                  <div class="field-hint">只有字幕文件自己的编号和视频不一致时才填（例：字幕已按 13–24 命名 → 填 0）</div>
                 </div>
               </div>
             </div>
@@ -1629,6 +1629,13 @@
       });
   }
 
+  /** 字幕偏移输入框 → 提交值：留空表示「跟随整体偏移」（null），填了就是显式数字 */
+  function hardlinkSubOffsetFromInput(input) {
+    const raw = input ? String(input.value || '').trim() : '';
+    if (!raw) return null;
+    return Math.max(-999, Math.min(999, Math.trunc(Number(raw) || 0)));
+  }
+
   function hardlinkFormValues() {
     const form = $('#extra-form');
     if (!form) return null;
@@ -1638,8 +1645,8 @@
       name: ($('#f-name', form)?.value || '').trim(),
       enabled: !!$('#h-enabled', form)?.checked,
       rename: !!$('#h-rename', form)?.checked,
-      videoOffset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-voffset', form)?.value) || 0))),
-      subOffset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-soffset', form)?.value) || 0))),
+      offset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-voffset', form)?.value) || 0))),
+      subOffset: hardlinkSubOffsetFromInput($('#h-soffset', form)),
     };
   }
 
@@ -1804,8 +1811,8 @@
         season: Math.max(0, Math.trunc(Number($('#h-season', form)?.value) || 0)),
         hardlinkEnabled: !!$('#h-enabled', form)?.checked,
         rename: !!$('#h-rename', form)?.checked,
-        videoOffset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-voffset', form)?.value) || 0))),
-        subOffset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-soffset', form)?.value) || 0))),
+        offset: Math.max(-999, Math.min(999, Math.trunc(Number($('#h-voffset', form)?.value) || 0))),
+        subOffset: hardlinkSubOffsetFromInput($('#h-soffset', form)),
         category: $('#x-category', form)?.value.trim() || '',
         tags: $('#x-tags', form)?.value.trim() || '',
         paused: !!$('#x-paused', form)?.checked,
@@ -2077,28 +2084,29 @@
           label: '按集数重命名',
           type: 'check',
           value: !!h.rename,
-          hint: '视频和字幕会改成「名称 - 目标集数」并互相同名',
+          hint: '视频和配对的字幕统一改成「名称 - 目标集数」，让字幕和剧集一一对应',
         },
         {
-          key: 'videoOffset',
-          label: '视频集数偏移',
+          key: 'offset',
+          label: '集数偏移（整体）',
           type: 'number',
-          value: String(h.videoOffset || 0),
-          hint: '例如下载 01–12、目标是 13–24，填 12',
+          value: String(h.offset || 0),
+          hint: '例如下载 01–12、目标是 13–24，填 12；视频和字幕一起平移',
         },
         {
           key: 'subOffset',
-          label: '字幕集数偏移',
+          label: '字幕偏移（可选）',
           type: 'number',
-          value: String(h.subOffset || 0),
-          hint: '字幕本身是 13–24 就填 0，会按目标集数和视频配对',
+          value: h.subOffset == null ? '' : String(h.subOffset),
+          hint: '留空 = 跟随整体偏移；只有字幕文件自己的编号和视频不一致时才填（字幕已按 13–24 命名 → 填 0）',
         },
       ],
       confirmText: '保存',
     });
     if (!values || typeof values !== 'object') return;
     const season = Math.max(0, Math.trunc(Number(values.season) || 0));
-    const offset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+    const clampOffset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+    const subOffsetRaw = String(values.subOffset == null ? '' : values.subOffset).trim();
     try {
       await api(`extras/${encodeURIComponent(id)}/hardlink`, {
         method: 'PUT',
@@ -2107,8 +2115,8 @@
           season,
           enabled: !!values.enabled,
           rename: !!values.rename,
-          videoOffset: offset(values.videoOffset),
-          subOffset: offset(values.subOffset),
+          offset: clampOffset(values.offset),
+          subOffset: subOffsetRaw === '' ? null : clampOffset(subOffsetRaw),
         },
       });
       toast('硬链接设置已更新', 'success');

@@ -351,7 +351,7 @@ async function main() {
   ok('补番使用追番存储路径预设', !!extraRec && extraRec.savePath.includes('/volume1/media'), extraRec && extraRec.savePath);
   ok('补番记录保存了硬链接目标', !!extraRec && !!extraRec.hardlink && extraRec.hardlink.dest === uiHlDest, JSON.stringify(extraRec && extraRec.hardlink));
   ok('补番记录保存了重命名/偏移', !!extraRec && extraRec.hardlink.rename === true
-    && extraRec.hardlink.videoOffset === 12 && extraRec.hardlink.subOffset === 0,
+    && extraRec.hardlink.offset === 12 && extraRec.hardlink.subOffset === 0,
     JSON.stringify(extraRec && extraRec.hardlink));
 
   // 8b. 硬链接开关：关闭后卡片标为「本次不硬链接」，再打开恢复

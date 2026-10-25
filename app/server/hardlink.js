@@ -182,8 +182,12 @@ function subtitleTag(base) {
 function planSeason(input) {
   const opts = input || {};
   const files = Array.isArray(opts.files) ? opts.files : [];
-  const videoOffset = toOffset(opts.videoOffset);
-  const subOffset = toOffset(opts.subOffset);
+  // 整体集数偏移：视频目标 = 视频集数 + offset；兼容旧入参 videoOffset
+  const offset = toOffset(opts.offset !== undefined ? opts.offset : opts.videoOffset);
+  // 字幕偏移：缺省（null/undefined/空串）= 跟随整体偏移；
+  // 只有字幕文件自己的编号和视频不一致时才显式填（如字幕已按目标集数命名 → 填 0）
+  const subOffsetFollows = opts.subOffset == null || opts.subOffset === '';
+  const subOffset = subOffsetFollows ? offset : toOffset(opts.subOffset);
   const rename = !!opts.rename;
   const renamePattern = String(opts.renamePattern || '${name} - ${episode2}');
   const showName = String(opts.name || '');
@@ -273,7 +277,7 @@ function planSeason(input) {
       });
     mains.sort((a, b) => a.episode - b.episode || a.base.localeCompare(b.base));
     mains.forEach((v) => {
-      v.target = Math.max(0, v.episode + videoOffset);
+      v.target = Math.max(0, v.episode + offset);
       episodes.push(v.target);
     });
     mains.sort((a, b) => (a.target || 0) - (b.target || 0) || a.base.localeCompare(b.base));
@@ -416,8 +420,9 @@ function planSeason(input) {
     fonts: fonts.length,
     episodes,
     rename,
-    videoOffset,
+    offset,
     subOffset,
+    subOffsetFollows,
     truncated,
     stats,
     skipped: stats.notReady + stats.notVideo + stats.excludedDir + stats.excludedTag
@@ -617,8 +622,9 @@ async function runHardlink(input) {
     fonts: plan.fonts || 0,
     episodes: plan.episodes || [],
     rename: !!plan.rename,
-    videoOffset: plan.videoOffset || 0,
-    subOffset: plan.subOffset || 0,
+    offset: plan.offset || 0,
+    subOffset: plan.subOffsetFollows ? null : (plan.subOffset || 0),
+    subOffsetFollows: !!plan.subOffsetFollows,
     renamed: (plan.stats && plan.stats.renamed) || 0,
     linked: 0,
     copied: 0,
