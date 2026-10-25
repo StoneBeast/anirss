@@ -396,6 +396,25 @@ async function handleApi(req, res, pathname, query) {
     return sendJson(res, 200, { ok: true, extra: engine.updateExtraHardlink(extraHardlinkMatch[1], body) });
   }
 
+  // 外挂字幕库：批量上传（文件/压缩包 base64）、链接自动抓取、删除
+  const extraSubsUploadMatch = pathname.match(/^\/api\/extras\/([^/]+)\/subs\/upload$/);
+  if (extraSubsUploadMatch && method === 'POST') {
+    const body = await readJson(req, 64 * 1024 * 1024);
+    return sendJson(res, 200, await engine.addExtraSubsUpload(extraSubsUploadMatch[1], body));
+  }
+  const extraSubsFetchMatch = pathname.match(/^\/api\/extras\/([^/]+)\/subs\/fetch$/);
+  if (extraSubsFetchMatch && method === 'POST') {
+    const body = await readJson(req);
+    return sendJson(res, 200, await engine.addExtraSubsFromUrl(extraSubsFetchMatch[1], body));
+  }
+  const extraSubsMatch = pathname.match(/^\/api\/extras\/([^/]+)\/subs$/);
+  if (extraSubsMatch && method === 'DELETE') {
+    return sendJson(res, 200, engine.removeExtraSubs(extraSubsMatch[1], {
+      name: query.name || '',
+      all: query.all === '1' || query.all === 'true',
+    }));
+  }
+
   const extraMatch = pathname.match(/^\/api\/extras\/([^/]+)$/);
   if (extraMatch && method === 'DELETE') {
     const result = await engine.deleteExtra(extraMatch[1], {

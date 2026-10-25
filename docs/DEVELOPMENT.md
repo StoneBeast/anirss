@@ -15,6 +15,7 @@ node dev/unit.js        # 单元测试（21 项）：RSS 2.0 / Atom、实体解�
 node dev/smoke.js       # 端到端烟测（43 项）：拉起真实服务 + 内置假 qBittorrent / 假 RSS 站点
 node dev/perf-check.js  # 性能行为验证：静态资源与 /api/state 的 gzip、ETag/304、写盘合并
 node dev/ui-actions.js  # 浏览器交互测试（75 项）：需要 Chrome CDP 9222 + 演示实例 8777
+node dev/ui-subs-check.js # 字幕弹窗抽查：弹窗打开、zip 上传入库、列表刷新（同上前提）
 node dev/ui-patch-check.js # keyed patch 抽查：软刷新后列表节点复用、滚动不跳（同上前提）
 node dev/ui-shot.js     # 重新生成 docs/ 下的截图
 node dev/ui-empty.js    # 空数据首启引导截图
@@ -44,7 +45,7 @@ ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
 fnpack.exe build -d <项目目录>
 
 # 2) 修正 cmd/ 权限并改名输出
-python dev/repack-fpk.py anirss.fpk anirss-1.10.1.fpk
+python dev/repack-fpk.py anirss.fpk anirss-1.11.0.fpk
 ```
 
 `repack-fpk.py` 只重写外层 tar（把生命周期脚本改成 `0755`），不改动 `app.tgz`，因此 `manifest.checksum` 仍然有效。构建后用 `tar -tzf` 检查顶层结构：`app.tgz`、`manifest`、`cmd/`、`config/`、`wizard/`、两个图标。
@@ -95,7 +96,10 @@ anirss/
 | PUT | `/api/hardlink` | 保存硬链接设置（扩展名 / 默认目标目录 / 去掉种子顶层目录） |
 | POST | `/api/extras/:id/hardlink` | 立即对某条补番执行硬链接（幂等，已有的文件跳过） |
 | PUT | `/api/extras/:id/hardlink` | 修改某条补番的硬链接目标/季/开关/重命名/集数偏移（`dest` 支持 `${name}`/`${season}`，空串 = 取消硬链接） |
-| DELETE | `/api/extras/:id` | 删除补番记录；`?deleteTorrent=1&deleteFiles=1` 同时删除 qB 任务与文件 |
+| POST | `/api/extras/:id/subs/upload` | 批量上传外挂字幕（`{files:[{name,data(base64)}]}`）；zip/tar 压缩包自动解压，非字幕文件跳过 |
+| POST | `/api/extras/:id/subs/fetch` | 从 http 直链抓取字幕（字幕文件或 zip/tar 压缩包，≤96MB） |
+| DELETE | `/api/extras/:id/subs` | 删除字幕库文件；`?name=<相对路径>` 删单个，`?all=1` 清空 |
+| DELETE | `/api/extras/:id` | 删除补番记录（同时清空其字幕库）；`?deleteTorrent=1&deleteFiles=1` 同时删除 qB 任务与文件 |
 | POST | `/api/preview` | 预览任意 RSS + 正则，不落库 |
 | GET/POST | `/api/subs` | 追番列表 / 新增 |
 | PUT/DELETE | `/api/subs/:id` | 修改 / 删除 |

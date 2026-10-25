@@ -249,6 +249,8 @@ function planSeason(input) {
       size,
       depth: rel.split('/').length,
       episode: guess && guess.kind === 'single' ? guess.episode : null,
+      abs: typeof item.abs === 'string' ? item.abs : '',
+      allowCopy: !!item.allowCopy,
     });
     if (!guess) stats.noEpisode++;
   }
@@ -318,7 +320,11 @@ function planSeason(input) {
         stats.subtitleUnmatched++;
         continue;
       }
-      subs.push({ rel, base, size: Number(item.size) || 0, episode: target.target, video: target });
+      subs.push({
+        rel, base, size: Number(item.size) || 0, episode: target.target, video: target,
+        abs: typeof item.abs === 'string' ? item.abs : '',
+        allowCopy: !!item.allowCopy,
+      });
       stats.subtitle++;
     }
   }
@@ -330,7 +336,11 @@ function planSeason(input) {
       if (!rel || !isReadyFile(item)) continue;
       if (!fontExts.has(extensionOf(rel))) continue;
       if (!dirSegments(rel).includes('fonts')) continue;
-      fonts.push({ rel, base: baseOf(rel), size: Number(item.size) || 0 });
+      fonts.push({
+        rel, base: baseOf(rel), size: Number(item.size) || 0,
+        abs: typeof item.abs === 'string' ? item.abs : '',
+        allowCopy: !!item.allowCopy,
+      });
       stats.font++;
     }
   }
@@ -354,7 +364,11 @@ function planSeason(input) {
       return;
     }
     used.set(key, item.rel);
-    planned.push({ src: item.rel, dest, size: item.size, kind });
+    planned.push({
+      src: item.rel, dest, size: item.size, kind,
+      abs: typeof item.abs === 'string' ? item.abs : '',
+      allowCopy: !!item.allowCopy,
+    });
   };
   for (const v of mains) {
     const stem = renameStem(v);
@@ -432,7 +446,7 @@ function planMirror(input) {
       stats.notMatch++;
       continue;
     }
-    picked.push({ rel, size: Number(item.size) || 0 });
+    picked.push({ rel, size: Number(item.size) || 0, abs: typeof item.abs === 'string' ? item.abs : '', allowCopy: !!item.allowCopy });
   }
 
   let prefix = '';
@@ -454,6 +468,8 @@ function planMirror(input) {
     dest: prefix && p.rel.startsWith(prefix + '/') ? p.rel.slice(prefix.length + 1) : p.rel,
     size: p.size,
     kind: 'file',
+    abs: p.abs || '',
+    allowCopy: !!p.allowCopy,
   }));
   return {
     mode: 'mirror',
@@ -605,6 +621,7 @@ async function runHardlink(input) {
     subOffset: plan.subOffset || 0,
     renamed: (plan.stats && plan.stats.renamed) || 0,
     linked: 0,
+    copied: 0,
     existed: 0,
     conflicts: 0,
     missing: 0,
@@ -675,7 +692,10 @@ async function runHardlink(input) {
 
   const destPrefix = destRoot.endsWith(path.sep) ? destRoot : destRoot + path.sep;
   for (const file of plan.files) {
-    const src = path.join(savePath, ...file.src.split('/'));
+    // abs：字幕库里的外挂字幕等自带绝对源路径，不来自 savePath
+    const src = file.abs && path.isAbsolute(file.abs)
+      ? file.abs
+      : path.join(savePath, ...file.src.split('/'));
     const target = path.join(destRoot, ...file.dest.split('/'));
     if (!target.startsWith(destPrefix)) {
       summary.failed++;
@@ -700,8 +720,18 @@ async function runHardlink(input) {
     }
     try {
       fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.linkSync(src, target);
-      summary.linked++;
+      try {
+        fs.linkSync(src, target);
+        summary.linked++;
+      } catch (e) {
+        // 外挂字幕存在应用数据目录，可能和媒体库不在同一分区：小文件直接复制兜底
+        if (file.allowCopy && (e.code === 'EXDEV' || e.code === 'EACCES' || e.code === 'EPERM')) {
+          fs.copyFileSync(src, target);
+          summary.copied++;
+        } else {
+          throw e;
+        }
+      }
       summary.bytes += srcStat.size || file.size || 0;
     } catch (e) {
       summary.failed++;
@@ -717,6 +747,7 @@ async function runHardlink(input) {
     summary.ok = true;
     const bits = [];
     if (summary.linked) bits.push(`新建 ${summary.linked} 个硬链接`);
+    if (summary.copied) bits.push(`复制 ${summary.copied} 个（不同分区的小文件）`);
     if (summary.existed) bits.push(`${summary.existed} 个已存在`);
     if (summary.conflicts) bits.push(`${summary.conflicts} 个目标被占用已跳过`);
     summary.note = bits.join('，') || '没有需要新建的硬链接';

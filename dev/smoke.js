@@ -16,6 +16,7 @@ const os = require('os');
 const assert = require('assert');
 const { spawn } = require('child_process');
 const { parseTorrentInfo } = require('../app/server/bencode');
+const { buildZip } = require('./zip-builder');
 
 const NODE = process.execPath;
 const ROOT = path.resolve(__dirname, '..');
@@ -273,6 +274,11 @@ async function startRssMock() {
       const buf = torrentFor(id);
       res.writeHead(200, { 'Content-Type': 'application/x-bittorrent', 'Content-Length': buf.length });
       return res.end(buf);
+    }
+    if (/^\/subs\/dl\/[\w.-]+\.(ass|srt|zip)$/.test(u.pathname)) {
+      const body = Buffer.from('url subtitle content');
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': body.length });
+      return res.end(body);
     }
     return text(res, 'Not Found', 404);
   }, RSS_PORT);
@@ -837,6 +843,51 @@ async function main() {
     assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 13.ass')), '同名字幕应跟随 13');
     assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.ass')), 'subs/ 里的 02 集字幕应配对到 14');
     console.log('✓ 补番：集数偏移 + 重命名');
+
+    // 外挂字幕库：上传 zip（含目录层级）→ 自动解压入库 → 自动重新硬链接
+    const subsZip = buildZip([
+      { name: 'chs/02.ass', data: 'chs subtitle', utf8Name: true },
+      { name: 'cht/02.ass', data: 'cht subtitle', utf8Name: true },
+      { name: 'readme.txt', data: '不是字幕', utf8Name: true },
+    ]);
+    const subsUp = await api(`/api/extras/${hlRec.id}/subs/upload`, {
+      method: 'POST',
+      body: { files: [{ name: 'subs.zip', data: subsZip.toString('base64') }] },
+    });
+    assert.strictEqual(subsUp.ok, true, JSON.stringify(subsUp));
+    assert.strictEqual(subsUp.added.length, 2, JSON.stringify(subsUp));
+    assert.deepStrictEqual(subsUp.added.map((s) => s.name), ['chs/02.ass', 'cht/02.ass'], JSON.stringify(subsUp));
+    assert.ok(subsUp.skipped.some((s) => s.name === 'readme.txt'), '非字幕文件应被跳过');
+    assert.ok(subsUp.link && (subsUp.link.linked + subsUp.link.copied) >= 2, JSON.stringify(subsUp.link));
+    // 同集字幕总数变多后，种子自带字幕也会改用带序号的新名字（sub1），外挂的两份是 sub2/sub3
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.sub1.ass')), '种子字幕随同集多份改为序号命名');
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.sub2.ass')), '外挂字幕应按目标集数配对并加语言序号');
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.sub3.ass')), '第二份字幕应有独立命名');
+    assert.ok(fs.existsSync(path.join(DATA_DIR, 'subtitles', hlRec.id, 'chs', '02.ass')), '字幕应保留压缩包目录层级入库');
+    console.log('✓ 补番：字幕 zip 上传自动解压并重新硬链接');
+
+    // 从链接抓取单个字幕文件
+    const subsFetch = await api(`/api/extras/${hlRec.id}/subs/fetch`, {
+      method: 'POST',
+      body: { url: `http://127.0.0.1:${RSS_PORT}/subs/dl/02.ass` },
+    });
+    assert.strictEqual(subsFetch.ok, true, JSON.stringify(subsFetch));
+    assert.strictEqual(subsFetch.added.length, 1, JSON.stringify(subsFetch));
+    assert.ok(fs.existsSync(path.join(renamedRoot, 'Hardlink Test - 14.sub4.ass')), 'URL 字幕应入库并链接');
+    console.log('✓ 补番：从链接抓取字幕');
+
+    // 删除单个 / 清空字幕库
+    const rmOne = await api(`/api/extras/${hlRec.id}/subs?name=${encodeURIComponent('chs/02.ass')}`, { method: 'DELETE' });
+    assert.strictEqual(rmOne.ok, true, JSON.stringify(rmOne));
+    assert.ok(!fs.existsSync(path.join(DATA_DIR, 'subtitles', hlRec.id, 'chs', '02.ass')), '删除后源文件应消失');
+    const stateAfterRm = await api('/api/extras/status', { method: 'POST', body: {} });
+    const recAfterRm = stateAfterRm.extras.find((x) => x.hash === hlHash);
+    assert.strictEqual(recAfterRm.subs.length, 2, JSON.stringify(recAfterRm.subs));
+    const rmAll = await api(`/api/extras/${hlRec.id}/subs?all=1`, { method: 'DELETE' });
+    assert.strictEqual(rmAll.ok, true, JSON.stringify(rmAll));
+    const stateAfterAll = await api('/api/extras/status', { method: 'POST', body: {} });
+    assert.strictEqual(stateAfterAll.extras.find((x) => x.hash === hlHash).subs.length, 0);
+    console.log('✓ 补番：字幕库删除 / 清空');
 
     // 本次不硬链接：手动触发也会被拒绝，目标模板保留
     const disabled = await api(`/api/extras/${hlRec.id}/hardlink`, { method: 'PUT', body: { enabled: false } });

@@ -2076,3 +2076,10 @@ html[data-theme='light'] .guess-label.none { background: #f2f5f8; color: #8a9cad
 .sub-card,
 .extra-card { content-visibility: auto; contain-intrinsic-size: auto 140px; }
 .sub-tile { content-visibility: auto; contain-intrinsic-size: auto 280px; }
+
+/* ---------------- 补番字幕库 ---------------- */
+.subs-list { display: flex; flex-direction: column; border: 1px solid var(--line-soft); border-radius: 10px; max-height: 220px; overflow-y: auto; }
+.subs-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line-soft); }
+.subs-row:first-child { border-top: 0; }
+.subs-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text); }
+.subs-size { flex: 0 0 auto; font-size: 11px; }

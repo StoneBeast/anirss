@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const {
   APP_VERSION,
@@ -28,6 +29,7 @@ const { fetchFeed } = require('./rss');
 const { fetchBuffer, isHtmlResponse } = require('./http');
 const { QBClient } = require('./qb');
 const hardlink = require('./hardlink');
+const { extractArchive, archiveKind, MAX_TOTAL_BYTES } = require('./archive');
 const { parseTorrentInfo, magnetInfoHash } = require('./bencode');
 const { setProxy, publicProxy: proxyPublic, normalizeProxy, proxyLabel } = require('./proxy');
 const {
@@ -1681,6 +1683,219 @@ class Engine {
     }
   }
 
+  // ---------- 外挂字幕库 ----------
+
+  subsDir(extraId) {
+    return path.join(this.store.dir, 'subtitles', String(extraId));
+  }
+
+  /** 字幕库接受哪些文件：硬链接设置里的字幕扩展名 + 常见字体 */
+  extraSubAccepted(name) {
+    const cfg = this.publicHardlinkConfig();
+    const subExts = hardlink.parseExtensions(cfg.subExts);
+    for (const ext of ['ttf', 'otf', 'ttc', 'otc', 'woff', 'woff2']) subExts.add(ext);
+    const base = String(name || '').replace(/\\/g, '/').split('/').pop();
+    const idx = base.lastIndexOf('.');
+    if (idx <= 0 || idx === base.length - 1) return false;
+    return subExts.has(base.slice(idx + 1).toLowerCase());
+  }
+
+  /**
+   * 落一个字幕文件到字幕库（保留压缩包内的目录层级），并同步到补番记录。
+   * 相对路径已经过 safeRelPath 清洗，不含 .. 越界段。
+   */
+  writeExtraSubFile(extra, relName, data) {
+    const rel = hardlink.safeRelPath(relName);
+    if (!rel) return null;
+    const dir = this.subsDir(extra.id);
+    const full = path.join(dir, ...rel.split('/'));
+    if (!full.startsWith(dir + path.sep)) return null;
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, data, { mode: 0o644 });
+    extra.subs = Array.isArray(extra.subs) ? extra.subs : [];
+    const existing = extra.subs.find((s) => s.name === rel);
+    const entry = { name: rel, size: data.length, at: nowMs() };
+    if (existing) Object.assign(existing, entry);
+    else extra.subs.push(entry);
+    return entry;
+  }
+
+  /**
+   * 把字幕库里的文件转成硬链接规划用的合成条目：
+   * progress=1 视为已完成，abs 指向字幕库真实路径，跨分区时允许复制兜底。
+   */
+  extraSubFileEntries(extra) {
+    const out = [];
+    const dir = this.subsDir(extra.id);
+    for (const s of extra.subs || []) {
+      const full = path.join(dir, ...String(s.name).split('/'));
+      if (!full.startsWith(dir + path.sep)) continue;
+      let st = null;
+      try { st = fs.statSync(full); } catch { continue; }
+      if (!st.isFile()) continue;
+      out.push({ name: s.name, size: st.size, progress: 1, priority: 1, abs: full, allowCopy: true });
+    }
+    return out;
+  }
+
+  /** 解析/下载到的内容入库：压缩包自动解压，非压缩包按单文件处理 */
+  extraSubsBytes(extra) {
+    return (extra.subs || []).reduce((n, s) => n + (Number(s.size) || 0), 0);
+  }
+
+  ingestExtraSubs(extra, fileName, data, added, skipped) {
+    const name = String(fileName || 'file').replace(/[\\/]+/g, '_').slice(0, 200);
+    if (!data || !data.length) {
+      skipped.push({ name, reason: '文件为空' });
+      return;
+    }
+    if (data.length > 96 * 1024 * 1024) {
+      skipped.push({ name, reason: '超过 96MB 上限' });
+      return;
+    }
+    const store = (relName, buf) => {
+      if (!this.extraSubAccepted(relName)) {
+        skipped.push({ name: relName, reason: '不是可识别的字幕/字体扩展名' });
+        return false;
+      }
+      if (this.extraSubsBytes(extra) + buf.length > MAX_TOTAL_BYTES) {
+        skipped.push({ name: relName, reason: '字幕库累计超过 256MB，请先删除部分文件' });
+        return false;
+      }
+      const storedEntry = this.writeExtraSubFile(extra, relName, buf);
+      if (storedEntry) {
+        added.push({ name: storedEntry.name, size: storedEntry.size });
+        return true;
+      }
+      return false;
+    };
+    const kind = archiveKind(name, data);
+    if (kind) {
+      let entries;
+      try {
+        entries = extractArchive(name, data).entries;
+      } catch (e) {
+        skipped.push({ name, reason: e.message });
+        return;
+      }
+      let stored = 0;
+      for (const entry of entries) {
+        if (store(entry.name, entry.data)) stored++;
+      }
+      if (!stored) skipped.push({ name, reason: `压缩包（${kind}）里没有可用的字幕/字体` });
+      return;
+    }
+    if (!this.extraSubAccepted(name)) {
+      skipped.push({ name, reason: '不是可识别的字幕/字体扩展名，也不是支持的压缩包（zip/tar）' });
+      return;
+    }
+    store(name, data);
+  }
+
+  /** 入库后的公共收尾：保存记录，已完成的补番自动重新硬链接一次 */
+  async finishExtraSubs(extra, added, skipped) {
+    if (added.length) this.store.scheduleSave();
+    let link = null;
+    if (added.length && extra.hardlink && extra.hardlink.dest
+      && extra.hardlink.enabled !== false && extra.ok) {
+      try {
+        await this.refreshExtraQb([extra]);
+        const progress = Number(extra.qb && extra.qb.progress) || 0;
+        if (progress >= 0.9999 && !this.hardlinkBusy.has(extra.id)) {
+          const result = await this.linkExtraRecord(extra);
+          if (result && !result.notReady) {
+            link = {
+              ok: !!result.ok, linked: result.linked || 0, copied: result.copied || 0,
+              existed: result.existed || 0, conflicts: result.conflicts || 0,
+              subs: result.subs || 0, error: result.error || '',
+            };
+          }
+        }
+      } catch { /* 链接失败不打断字幕入库，卡片上可手动重跑 */ }
+    }
+    return { ok: true, added, skipped, link };
+  }
+
+  /** 补番页批量上传字幕/压缩包 */
+  async addExtraSubsUpload(id, input) {
+    const extra = this.data.extras.find((e) => e.id === id);
+    if (!extra) throw httpError(404, '补番记录不存在', 'EXTRA_NOT_FOUND');
+    const files = Array.isArray(input && input.files) ? input.files : [];
+    if (!files.length) throw badRequest('请选择要上传的字幕文件或压缩包', 'EMPTY_SUBS_UPLOAD');
+    if (files.length > 20) throw badRequest('一次最多上传 20 个文件，大包请压缩后上传', 'TOO_MANY_FILES');
+    const added = [];
+    const skipped = [];
+    for (const f of files.slice(0, 20)) {
+      const name = String(f && f.name || 'file');
+      let data = null;
+      try {
+        data = Buffer.from(String(f && f.data || '').replace(/^data:[^,]+,/, ''), 'base64');
+      } catch {
+        skipped.push({ name, reason: '文件内容不是有效的 base64' });
+        continue;
+      }
+      this.ingestExtraSubs(extra, name, data, added, skipped);
+    }
+    this.log('info', `补番「${extra.name}」上传字幕：新增 ${added.length} 个${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`);
+    return this.finishExtraSubs(extra, added, skipped);
+  }
+
+  /** 从链接自动下载字幕（字幕文件或 zip/tar 压缩包） */
+  async addExtraSubsFromUrl(id, input) {
+    const extra = this.data.extras.find((e) => e.id === id);
+    if (!extra) throw httpError(404, '补番记录不存在', 'EXTRA_NOT_FOUND');
+    const url = String(input && input.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) throw badRequest('请填写 http/https 的字幕下载链接', 'BAD_SUBS_URL');
+    const res = await fetchBuffer(url, {
+      timeout: 60000,
+      maxBytes: 96 * 1024 * 1024,
+      proxy: this.data.proxy,
+      headers: { 'Accept': 'application/zip, application/x-tar, application/octet-stream, text/*, */*' },
+    });
+    const fileName = filenameFromUrl(res.url || url, 'subs.zip');
+    const added = [];
+    const skipped = [];
+    this.ingestExtraSubs(extra, fileName, res.buffer, added, skipped);
+    this.log('info', `补番「${extra.name}」从链接抓取字幕：新增 ${added.length} 个${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`);
+    return this.finishExtraSubs(extra, added, skipped);
+  }
+
+  /** 删除字幕库文件（单个或全部） */
+  removeExtraSubs(id, input) {
+    const extra = this.data.extras.find((e) => e.id === id);
+    if (!extra) throw httpError(404, '补番记录不存在', 'EXTRA_NOT_FOUND');
+    const options = input || {};
+    const dir = this.subsDir(extra.id);
+    if (options.all) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+      const count = (extra.subs || []).length;
+      extra.subs = [];
+      this.store.save();
+      this.log('info', `已清空补番「${extra.name}」的字幕库（${count} 个文件）`);
+      return { ok: true, removed: count };
+    }
+    const name = String(options.name || '').replace(/\\/g, '/').trim();
+    if (!name) throw badRequest('请指定要删除的字幕文件，或用 all=1 清空', 'EMPTY_SUBS_NAME');
+    const full = path.join(dir, ...hardlink.safeRelPath(name).split('/'));
+    if (!full.startsWith(dir + path.sep)) throw badRequest('字幕路径无效', 'BAD_SUBS_NAME');
+    let removed = 0;
+    try {
+      if (fs.existsSync(full)) {
+        fs.rmSync(full, { force: true });
+        removed = 1;
+      }
+    } catch { /* ignore */ }
+    // 顺手清掉空目录
+    let parent = path.dirname(full);
+    while (parent.startsWith(dir + path.sep) && parent !== dir) {
+      try { fs.rmdirSync(parent); } catch { break; }
+      parent = path.dirname(parent);
+    }
+    extra.subs = (extra.subs || []).filter((s) => s.name !== name);
+    this.store.save();
+    return { ok: true, removed };
+  }
+
   publicExtra(x) {
     const e = x || {};
     const guess = guessEpisode(e.name);
@@ -1706,6 +1921,11 @@ class Engine {
       ok: !!e.ok,
       error: e.error || '',
       createdAt: e.createdAt || 0,
+      subs: (e.subs || []).slice(0, 100).map((s) => ({
+        name: s.name,
+        size: Number(s.size) || 0,
+        at: Number(s.at) || 0,
+      })),
       episode: guess ? guess.episode : null,
       episodeLabel: guess ? guess.label : '',
       episodeKind: guess ? guess.kind : '',
@@ -2027,6 +2247,9 @@ class Engine {
       } catch (e) {
         return fail(`读取种子文件列表失败：${e.message}`);
       }
+      // 外挂字幕库里的文件一起参与规划（配对、重命名与种子内字幕同一套逻辑）
+      const subEntries = this.extraSubFileEntries(x);
+      if (subEntries.length) files = files.concat(subEntries);
       const result = await hardlink.runHardlink({
         savePath: String(t.save_path || (x.qb && x.qb.savePath) || ''),
         destRoot: this.resolveHardlinkDest(x.hardlink.dest, x.name, x.hardlink.season),
@@ -2181,6 +2404,7 @@ class Engine {
       deletedTorrent = true;
     }
     this.data.extras = this.data.extras.filter((e) => e.id !== id);
+    try { fs.rmSync(this.subsDir(id), { recursive: true, force: true }); } catch { /* ignore */ }
     this.store.save();
     this.log('info', `已删除补番记录「${x.name}」${deletedTorrent ? '（同时删除 qB 任务）' : ''}`);
     return { ok: true, deletedTorrent };

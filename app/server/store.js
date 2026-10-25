@@ -176,6 +176,12 @@ class Store {
       x.error = String(x.error || '');
       x.createdAt = Number(x.createdAt) || 0;
       x.qb = x.qb && typeof x.qb === 'object' ? x.qb : null;
+      // 外挂字幕库（应用数据目录 subtitles/<id>/ 下的相对路径清单）
+      x.subs = Array.isArray(x.subs)
+        ? x.subs.slice(0, 1000)
+          .map((s) => ({ name: String(s && s.name || '').replace(/\\/g, '/').slice(0, 400), size: Number(s && s.size) || 0, at: Number(s && s.at) || 0 }))
+          .filter((s) => s.name && !s.name.split('/').includes('..'))
+        : [];
       const hl = x.hardlink && typeof x.hardlink === 'object' ? x.hardlink : {};
       x.hardlink = {
         dest: String(hl.dest || ''),

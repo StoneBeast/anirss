@@ -9,6 +9,9 @@ const { parseFeed, decodeEntities } = require('../app/server/rss');
 const { parseTorrentInfo, magnetInfoHash } = require('../app/server/bencode');
 const { deriveHomeUrl, parseMikanHome, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes, cleanFeedTitle } = require('../app/server/meta');
 const { normalizeProxy, isNoProxy } = require('../app/server/proxy');
+const { extractArchive, archiveKind } = require('../app/server/archive');
+const { buildZip } = require('./zip-builder');
+const zlib = require('zlib');
 const {
   compileFilters, matchTitle, composeUrl, normalizeBaseUrl,
   isHttpUrl, filenameFromUrl, formatBytes, httpError, guessEpisode, episodeRanges,
@@ -455,6 +458,97 @@ test('硬链接：正片/字幕识别与规划', () => {
       fs.rmSync(dl, { recursive: true, force: true });
       fs.rmSync(dest, { recursive: true, force: true });
     }
+  });
+
+  // ---------- 字幕压缩包解压 ----------
+
+  test('字幕包：zip（store/deflate/GBK 文件名/目录层级）', () => {
+    const utf8Zip = buildZip([
+      { name: 'subs/', data: Buffer.alloc(0) },
+      { name: 'subs/[G] Show - 01.chs.ass', data: Buffer.from('简体字幕'), utf8Name: true },
+      { name: 'subs/[G] Show - 01.cht.ass', data: Buffer.from('繁體字幕'), method: 8, utf8Name: true },
+      { name: 'fonts/MSYaHei.ttf', data: Buffer.from('fontdata'), utf8Name: true },
+    ]);
+    const out = extractArchive('subs.zip', utf8Zip);
+    assert.strictEqual(out.kind, 'zip');
+    assert.strictEqual(out.entries.length, 3, JSON.stringify(out.entries.map((e) => e.name)));
+    assert.strictEqual(out.entries[0].name, 'subs/[G] Show - 01.chs.ass');
+    assert.strictEqual(out.entries[0].data.toString(), '简体字幕');
+    assert.strictEqual(out.entries[1].data.toString(), '繁體字幕');
+    assert.strictEqual(out.entries[2].name, 'fonts/MSYaHei.ttf');
+  });
+
+  test('字幕包：zip GBK 文件名按 GBK 解码', () => {
+    // "中文.ass" 的 GBK 字节（Buffer 原生不支持 gbk 编码，用已知字节序列）
+    const gbkName = Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x2e, 0x61, 0x73, 0x73]);
+    const zip = buildZip([{ name: gbkName.toString('latin1'), data: Buffer.from('sub') }]);
+    const out = extractArchive('a.zip', zip);
+    assert.strictEqual(out.entries.length, 1);
+    assert.strictEqual(out.entries[0].name, '中文.ass');
+  });
+
+  test('字幕包：zip 路径穿越被清洗', () => {
+    const zip = buildZip([
+      { name: '../evil.ass', data: Buffer.from('x') },
+      { name: 'ok/../../ok2.ass', data: Buffer.from('x') },
+      { name: 'C:/abs/path.ass', data: Buffer.from('x') },
+    ]);
+    const out = extractArchive('a.zip', zip);
+    // .. 段被直接丢弃（不会越界），其余保持可见层级
+    assert.deepStrictEqual(out.entries.map((e) => e.name), ['evil.ass', 'ok/ok2.ass', 'abs/path.ass']);
+  });
+
+  test('字幕包：tar.gz 与 rar/7z 识别', () => {
+    const tarBuf = (() => {
+      const blocks = [];
+      const add = (name, data, type) => {
+        const h = Buffer.alloc(512);
+        h.write(name.slice(0, 99), 0, 'utf8');
+        h.write('0000644\0', 100, 'utf8');
+        h.write(data.length.toString(8).padStart(11, '0') + '\0', 124, 'utf8');
+        h.write(type, 156, 'utf8');
+        h.write('ustar\0', 257, 'utf8');
+        h.write('00', 263, 'utf8');
+        let sum = 0;
+        for (const b of h) sum += b;
+        h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'utf8');
+        blocks.push(h, data, Buffer.alloc((512 - (data.length % 512)) % 512));
+      };
+      add('subs/01.ass', Buffer.from('tar sub'), '0');
+      add('subs/02.ass', Buffer.from('tar sub2'), '0');
+      blocks.push(Buffer.alloc(1024));
+      return Buffer.concat(blocks);
+    })();
+    const tgz = extractArchive('a.tar.gz', zlib.gzipSync(tarBuf));
+    assert.strictEqual(tgz.kind, 'tar.gz');
+    assert.strictEqual(tgz.entries.length, 2);
+    assert.strictEqual(tgz.entries[1].name, 'subs/02.ass');
+    assert.strictEqual(tgz.entries[1].data.toString(), 'tar sub2');
+
+    assert.throws(() => extractArchive('a.rar', Buffer.from('Rar!\x1a\x07\x01\x00')), /RAR/);
+    assert.throws(() => extractArchive('a.7z', Buffer.from('7z\xbc\xaf\x27\x1c')), /7z/);
+    assert.strictEqual(extractArchive('plain.ass', Buffer.from('x')), null);
+    assert.strictEqual(archiveKind('a.rar', Buffer.from('Rar!')), 'rar');
+    assert.strictEqual(archiveKind('a.7z', Buffer.from('7z\xbc\xaf\x27\x1c')), '7z');
+    assert.strictEqual(archiveKind('plain.ass', Buffer.from('x')), '');
+  });
+
+  test('字幕包：加密 zip 与超大文件报错', () => {
+    const zip = buildZip([{ name: 'a.ass', data: Buffer.from('x') }]);
+    // 手工置上加密位（bit 0）
+    const encrypted = Buffer.from(zip);
+    encrypted.writeUInt16LE(encrypted.readUInt16LE(6) | 0x0001, 6); // local flags
+    // central 的 flags 偏移随条目走，直接找 central 签名
+    for (let i = 0; i < encrypted.length - 4; i++) {
+      if (encrypted.readUInt32LE(i) === 0x02014b50) {
+        encrypted.writeUInt16LE(0x0001, i + 8);
+        break;
+      }
+    }
+    assert.throws(() => extractArchive('a.zip', encrypted), /加密/);
+
+    const big = Buffer.alloc(65 * 1024 * 1024);
+    assert.throws(() => extractArchive('a.zip', buildZip([{ name: 'big.ass', data: big }])), /64MB/);
   });
 
   console.log(`\n单元测试全部通过（${passed} 项）`);

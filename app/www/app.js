@@ -1350,6 +1350,7 @@
       meta.push(`<span class="chip">${fmtBytes(qb.size || 0)}${qb.dlspeed ? ` · ${fmtBytes(qb.dlspeed)}/s` : ''}</span>`);
       if (qb.state && /download/i.test(qb.state)) meta.push(`<span class="chip">剩余 ${etaText(qb.eta)}</span>`);
     }
+    if (x.subs && x.subs.length) meta.push(`<span class="chip">${icon('upload')}${x.subs.length} 个外挂字幕</span>`);
     return `
       <article class="extra-card ${x.ok ? '' : 'failed'}" data-key="${esc(x.id)}">
         <div class="extra-main">
@@ -1368,6 +1369,7 @@
           ${x.error ? `<div class="sub-error">${icon('alert', 12)} ${esc(x.error)}</div>` : ''}
         </div>
         <div class="extra-actions">
+          <button class="icon-btn" type="button" data-action="extra-subs" data-id="${esc(x.id)}" title="字幕管理（上传/下载字幕，自动跟随硬链接）">${icon('upload')}</button>
           ${x.hardlink && x.hardlink.dest ? `<button class="icon-btn" type="button" data-action="extra-hardlink-edit" data-id="${esc(x.id)}" title="修改硬链接">${icon('edit')}</button>` : ''}
           ${x.hardlink && x.hardlink.dest && x.hardlink.enabled !== false ? `<button class="icon-btn" type="button" data-action="extra-hardlink" data-id="${esc(x.id)}" title="立即硬链接">${icon('link')}</button>` : ''}
           <button class="icon-btn" type="button" data-action="extra-copy" data-id="${esc(x.id)}" title="复制磁力链接">${icon('copy')}</button>
@@ -1921,6 +1923,124 @@
       toast(e.message, 'error');
     }
     await refresh();
+  }
+
+  /* ============================================================
+   * 补番外挂字幕库
+   * ============================================================ */
+
+  function readFilesAsBase64(fileList) {
+    return Promise.all(Array.from(fileList || []).map((f) => new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve({ name: f.name, data: String(r.result || '').split(',')[1] || '' });
+      r.onerror = () => reject(new Error('读取文件失败：' + f.name));
+      r.readAsDataURL(f);
+    })));
+  }
+
+  function subsResultToast(result) {
+    const r = result || {};
+    const bits = [];
+    if (r.added && r.added.length) bits.push(`新增 ${r.added.length} 个文件`);
+    if (r.skipped && r.skipped.length) bits.push(`跳过 ${r.skipped.length} 个（${r.skipped[0].reason || '不支持的类型'}）`);
+    if (!bits.length) bits.push('没有可入库的文件');
+    const link = r.link;
+    if (link) {
+      const lbits = [];
+      if (link.linked) lbits.push(`硬链接 ${link.linked} 个`);
+      if (link.copied) lbits.push(`复制 ${link.copied} 个`);
+      if (link.existed) lbits.push(`${link.existed} 个已存在`);
+      if (link.conflicts) lbits.push(`${link.conflicts} 个被占用`);
+      bits.push(lbits.length ? `已重新硬链接：${lbits.join('，')}` : `硬链接：${link.error || '没有变化'}`);
+    } else if (r.added && r.added.length) {
+      bits.push('补番未下载完或未设置硬链接目录，之后链接时会自动带上');
+    }
+    toast(bits.join('；'), link && link.error ? 'warn' : (r.added && r.added.length ? 'success' : 'warn'), '字幕');
+  }
+
+  function openExtraSubsModal(id) {
+    if (!(S.data.extras || []).some((e) => e.id === id)) return;
+    S.extraSubsId = id;
+    renderExtraSubsModal();
+  }
+
+  function renderExtraSubsModal() {
+    const x = (S.data.extras || []).find((e) => e.id === S.extraSubsId);
+    if (!x) { closeModal(); return; }
+    const subs = x.subs || [];
+    const rows = subs.map((s) => `
+      <div class="subs-row" data-key="${esc(s.name)}">
+        <span class="subs-name mono" title="${esc(s.name)}">${esc(s.name)}</span>
+        <span class="subs-size faint">${fmtBytes(s.size)}</span>
+        <button class="icon-btn" type="button" data-action="extra-subs-delete" data-id="${esc(x.id)}" data-name="${esc(s.name)}" title="删除">${icon('trash', 14)}</button>
+      </div>`).join('');
+    openModal(`
+      <div class="modal-backdrop" data-backdrop="modal">
+        <div class="modal" role="dialog" aria-modal="true">
+          <div class="modal-head">
+            <div>
+              <div class="modal-title">字幕管理 · ${esc(x.name)}</div>
+              <div class="modal-sub">字幕存进应用数据目录，硬链接/重命名与种子内字幕同一套逻辑；跨分区时小文件自动改为复制</div>
+            </div>
+            <button class="icon-btn" type="button" data-action="close-modal" title="关闭">${icon('x')}</button>
+          </div>
+          <div class="modal-body">
+            <div class="field">
+              <label class="field-label">已入库 <span class="tip">${subs.length ? `${subs.length} 个文件` : '还没有'}</span></label>
+              ${subs.length ? `<div class="subs-list">${rows}</div>` : '<div class="field-hint">字幕会跟随补番一起链接到媒体库；支持 .ass / .srt / .ssa / .vtt / .sup 与字体文件</div>'}
+              ${subs.length ? `<div class="btn-row"><button class="btn btn-sm btn-ghost" data-action="extra-subs-clear" data-id="${esc(x.id)}">${icon('trash', 13)}全部删除</button></div>` : ''}
+            </div>
+            <div class="field">
+              <label class="field-label" for="extra-subs-file">批量上传 <span class="tip">字幕/字体文件或 zip / tar / tar.gz 压缩包，自动解压</span></label>
+              <input class="input" id="extra-subs-file" type="file" multiple data-id="${esc(x.id)}"
+                accept=".ass,.srt,.ssa,.vtt,.sup,.ttf,.otf,.ttc,.zip,.tar,.tgz">
+              <div class="field-hint">保留压缩包内的目录层级；同一集多份字幕（简/繁/日）会按语言后缀自动区分</div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="extra-subs-url">从链接下载 <span class="tip">直链字幕文件或 zip/tar 压缩包，≤ 96MB</span></label>
+              <div class="btn-row">
+                <input class="input mono" id="extra-subs-url" placeholder="https://…/subs.zip 或 …/01.ass" spellcheck="false">
+                <button class="btn" type="button" data-action="extra-subs-fetch" data-id="${esc(x.id)}">${icon('download', 14)}抓取</button>
+              </div>
+              ${x.hardlink && x.hardlink.dest ? '' : '<div class="field-hint">这条补番还没有设置硬链接目录：字幕会先入库，设置目录并链接时会一起带上</div>'}
+            </div>
+          </div>
+        </div>
+      </div>`, 'extra-subs');
+  }
+
+  async function extraSubsUpload(id, inputEl) {
+    const files = inputEl && inputEl.files ? inputEl.files : null;
+    if (!files || !files.length) return;
+    await withBusy(null, async () => {
+      try {
+        const payload = await readFilesAsBase64(files);
+        const r = await api(`extras/${encodeURIComponent(id)}/subs/upload`, { method: 'POST', body: { files: payload } });
+        subsResultToast(r);
+        await refresh();
+        if (S.modal && S.modal.type === 'extra-subs') renderExtraSubsModal();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        if (inputEl) inputEl.value = '';
+      }
+    });
+  }
+
+  async function extraSubsFetch(id) {
+    const input = $('#extra-subs-url');
+    const url = input ? input.value.trim() : '';
+    if (!url) { toast('请先粘贴字幕下载链接', 'warn'); return; }
+    await withBusy(null, async () => {
+      try {
+        const r = await api(`extras/${encodeURIComponent(id)}/subs/fetch`, { method: 'POST', body: { url } });
+        subsResultToast(r);
+        await refresh();
+        if (S.modal && S.modal.type === 'extra-subs') renderExtraSubsModal();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    });
   }
 
   async function editExtraHardlink(id) {
@@ -2765,6 +2885,45 @@
       case 'extra-hardlink-edit':
         await editExtraHardlink(id);
         break;
+      case 'extra-subs':
+        openExtraSubsModal(id);
+        break;
+      case 'extra-subs-fetch':
+        await extraSubsFetch(id);
+        break;
+      case 'extra-subs-delete': {
+        const name = el.dataset.name || '';
+        await withBusy(el, async () => {
+          try {
+            await api(`extras/${encodeURIComponent(id)}/subs?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+            await refresh();
+            if (S.modal && S.modal.type === 'extra-subs') renderExtraSubsModal();
+          } catch (e) {
+            toast(e.message, 'error');
+          }
+        });
+        break;
+      }
+      case 'extra-subs-clear': {
+        const ok = await askConfirm({
+          title: '清空字幕库',
+          message: '删除这条补番入库的全部字幕/字体文件；已经链接到媒体库的副本会保留。',
+          confirmText: '全部删除',
+          danger: true,
+        });
+        if (!ok) break;
+        await withBusy(el, async () => {
+          try {
+            await api(`extras/${encodeURIComponent(id)}/subs?all=1`, { method: 'DELETE' });
+            toast('字幕库已清空', 'success');
+            await refresh();
+            if (S.modal && S.modal.type === 'extra-subs') renderExtraSubsModal();
+          } catch (e) {
+            toast(e.message, 'error');
+          }
+        });
+        break;
+      }
       case 'hardlink-probe':
         await probeHardlinkDest();
         break;
@@ -4347,6 +4506,10 @@
     const t = e.target;
     if (t.id === 'import-file') {
       importConfigFile(t);
+      return;
+    }
+    if (t.id === 'extra-subs-file') {
+      if (t.files && t.files.length) extraSubsUpload(t.dataset.id, t);
       return;
     }
     if (t.closest('#conn-form')) S.formDirty = true;
