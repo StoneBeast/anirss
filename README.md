@@ -2,7 +2,7 @@
 
 > **Ani**me + **RSS**：把 RSS 追番变成自动下载。零 npm 依赖的自托管 Web 应用——按「站点基础地址 + 追番路径」拼出 RSS，用正则筛选标题，自动提交到 qBittorrent；另有站点搜索快速追番、集数识别、磁力/种子单次补番。
 
-![version](https://img.shields.io/badge/version-1.13.0-2f81f7)
+![version](https://img.shields.io/badge/version-1.13.2-2f81f7)
 ![node](https://img.shields.io/badge/node-%E2%89%A518-3c873a)
 ![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-6f42c1)
@@ -30,7 +30,7 @@
 ### 方式一：fnOS（飞牛）应用
 
 1. 在 fnOS 应用中心开启「手动安装」。
-2. 安装 `anirss-1.13.0.fpk`（依赖 `nodejs_v24`，应用中心会自动处理）。
+2. 安装 `anirss-1.13.2.fpk`（依赖 `nodejs_v24`，应用中心会自动处理）。
 3. 点击桌面上的「AniRSS 追番台」，系统浏览器会打开 `http://<NAS-IP>:18181/`。
 
 数据目录是 `$TRIM_PKGVAR`（通常在 `/vol1/@appdata/anirss/`）；卸载默认保留数据。
@@ -153,7 +153,7 @@ qBittorrent 把一部番下载到 `/volume1/downloads/葬送的芙莉莲`（里�
 1.7.0 起项目更名为 AniRSS，fnOS 应用 id 由 `qbrss` 改为 `anirss`，对 fnOS 来说是一个**新应用**：
 
 1. **先备份**：旧应用「连接设置 → 导出配置」下载 JSON，或复制旧数据目录 `/var/apps/qbrss/var/config.json`。
-2. **停掉旧应用**（它占着 18181 端口），安装 `anirss-1.13.0.fpk`。
+2. **停掉旧应用**（它占着 18181 端口），安装 `anirss-1.13.2.fpk`。
 3. 新版首次启动会自动尝试从 `$QBRSS_DATA`、`/var/apps/qbrss/var`、旧项目旁的 `qbrss/data` 迁移配置，日志里会出现「已从旧数据目录迁移」；旧目录已删的话，用「连接设置 → 导入配置」导入第 1 步的 JSON。
 4. 确认无误后再卸载旧应用。
 
