@@ -267,6 +267,7 @@ async function fetchFeed(feedUrl, opts) {
   try {
     res = await fetchBuffer(feedUrl, {
       timeout: options.timeout || 20000,
+      deadline: options.deadline || 0,
       maxBytes: options.maxBytes || 8 * 1024 * 1024,
       headers: {
         'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',

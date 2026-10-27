@@ -2054,6 +2054,39 @@ html[data-theme="light"] .field-hint.bad { color: #b52d43; }
 .subgroup-chip:hover { border-color: rgba(56, 182, 255, 0.45); background: rgba(56, 182, 255, 0.1); color: var(--text); }
 .subgroup-chip.hit { border-color: rgba(56, 182, 255, 0.28); background: rgba(56, 182, 255, 0.07); }
 
+/* 搜索等待中：阶段提示 + 骨架，避免长时间只有一行小字 */
+.search-progress { margin: 8px 0 12px; }
+.search-progress-head { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--text); }
+.search-progress-steps { margin: 7px 0 12px; letter-spacing: 0.2px; }
+.search-elapsed { margin-left: auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.search-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 7px 11px;
+  border: 1px dashed rgba(56, 182, 255, 0.3);
+  border-radius: 10px;
+  background: rgba(56, 182, 255, 0.05);
+  color: var(--muted);
+}
+.search-pending .spinner { width: 11px; height: 11px; border-width: 1.5px; }
+.search-skeleton .search-hit.is-ghost { opacity: 0.8; }
+.search-skeleton .sk-line,
+.search-skeleton .sk-chip { position: relative; overflow: hidden; display: block; background: rgba(255, 255, 255, 0.06); }
+.search-skeleton .sk-line { height: 11px; border-radius: 6px; }
+.search-skeleton .sk-chips { display: flex; gap: 6px; }
+.search-skeleton .sk-chip { width: 88px; height: 24px; border-radius: 999px; }
+.search-skeleton .sk-line::after,
+.search-skeleton .sk-chip::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
 html[data-theme='light'] .extra-card { background: #fff; border-color: #e6edf4; }
 html[data-theme='light'] .extra-hl.ok { color: #1f8a52; }
 html[data-theme='light'] .extra-hl.warn .extra-hl-state { color: #96650f; }
@@ -2063,6 +2096,9 @@ html[data-theme='light'] .search-hit { background: #fff; border-color: #e6edf4; 
 html[data-theme='light'] .subgroup-chip { background: #fff; border-color: #e2eaf2; color: #5b7085; }
 html[data-theme='light'] .subgroup-chip strong { color: #20303f; }
 html[data-theme='light'] .subgroup-chip:hover { border-color: #9ecdec; background: #f2f9ff; }
+html[data-theme='light'] .search-skeleton .sk-line,
+html[data-theme='light'] .search-skeleton .sk-chip { background: #eef2f7; }
+html[data-theme='light'] .search-pending { background: #f2f9ff; border-color: #cfe6f7; }
 
 
 /* ---------------- Episode guess ---------------- */

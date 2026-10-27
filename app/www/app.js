@@ -86,6 +86,12 @@
     searchResult: null,
     searchLoading: false,
     searchError: '',
+    searchPending: false,
+    searchStage: '',
+    searchStartedAt: 0,
+    searchElapsed: 0,
+    searchTimer: null,
+    searchSeq: 0,
     guessResult: null,
     confirmResolve: null,
     refreshing: false,
@@ -2148,10 +2154,38 @@
     return parts.join(' · ');
   }
 
+  /** 搜索等待中的骨架卡片，避免长时间只有一行小字 */
+  function searchSkeletonHTML(count) {
+    return `<div class="search-list search-skeleton">${Array.from({ length: count }, () => `
+      <div class="search-hit is-ghost">
+        <div class="search-cover search-cover-empty"></div>
+        <div class="search-main">
+          <span class="sk-line" style="width:38%"></span>
+          <span class="sk-line" style="width:62%"></span>
+          <div class="sk-chips"><span class="sk-chip"></span><span class="sk-chip"></span><span class="sk-chip"></span></div>
+        </div>
+      </div>`).join('')}</div>`;
+  }
+
+  function searchElapsedText() {
+    return `${(S.searchElapsed / 1000).toFixed(1)}s`;
+  }
+
+  function searchProgressHTML() {
+    return `
+      <div class="search-progress">
+        <div class="search-progress-head">
+          <span class="spinner"></span>
+          <span class="search-stage">${esc(S.searchStage || '正在搜索站点…')}</span>
+          <span class="search-elapsed">${searchElapsedText()}</span>
+        </div>
+        <div class="search-progress-steps small faint">站点搜索 → 单集详情 → 番组主页 → 字幕组体积</div>
+      </div>
+      ${searchSkeletonHTML(3)}`;
+  }
+
   function searchResultsHTML() {
-    if (S.searchLoading) {
-      return `<div class="qb-empty"><span class="spinner" style="display:inline-block;vertical-align:-2px"></span> 正在搜索站点…</div>`;
-    }
+    if (S.searchLoading) return searchProgressHTML();
     if (S.searchError) {
       return `<div class="notice red">${icon('alert')}<div>${esc(S.searchError)}</div></div>`;
     }
@@ -2162,8 +2196,10 @@
     if (!r.results.length) {
       return `<div class="qb-empty">没有找到匹配的番剧，换个关键词或到站点确认名字。</div>`;
     }
+    const spent = r.timings && r.timings.total ? ` · 耗时 ${(r.timings.total / 1000).toFixed(1)}s` : '';
     return `
-      <div class="search-summary small faint">搜索「${esc(r.query)}」：${r.results.length} 部番剧 / ${r.totalEpisodes} 条单集 · ${esc(r.baseName || '')}</div>
+      <div class="search-summary small faint">搜索「${esc(r.query)}」：${r.results.length} 部番剧 / ${r.totalEpisodes} 条单集 · ${esc(r.baseName || '')}${spent}</div>
+      ${S.searchPending ? `<div class="search-pending small"><span class="spinner"></span> 正在补齐字幕组精确体积…<span class="search-elapsed">${searchElapsedText()}</span></div>` : ''}
       <div class="search-list">
         ${r.results.map((g) => `
           <article class="search-hit">
@@ -2215,6 +2251,27 @@
     if (box) box.innerHTML = searchResultsHTML();
   }
 
+  /** 等待中的秒数走单独的 ticker：只改文本，不重建整个结果列表 */
+  function startSearchTicker() {
+    stopSearchTicker();
+    S.searchStartedAt = Date.now();
+    S.searchElapsed = 0;
+    S.searchTimer = setInterval(() => {
+      S.searchElapsed = Date.now() - S.searchStartedAt;
+      document.querySelectorAll('#search-results .search-elapsed').forEach((el) => {
+        el.textContent = searchElapsedText();
+      });
+    }, 200);
+  }
+
+  function stopSearchTicker() {
+    if (S.searchTimer) {
+      clearInterval(S.searchTimer);
+      S.searchTimer = null;
+    }
+    if (S.searchStartedAt) S.searchElapsed = Date.now() - S.searchStartedAt;
+  }
+
   function openSearchModal() {
     const d = S.data;
     if (!d.bases.length) {
@@ -2224,6 +2281,10 @@
     S.searchResult = null;
     S.searchError = '';
     S.searchLoading = false;
+    S.searchPending = false;
+    S.searchStage = '';
+    stopSearchTicker();
+    S.searchStartedAt = 0;
     const preferred = d.bases.find((b) => /mikan/i.test(b.url)) || d.bases[0];
     openModal(`
       <div class="modal-backdrop" data-backdrop="modal">
@@ -2268,22 +2329,80 @@
       toast('请输入番剧名', 'warn');
       return;
     }
-    S.searchLoading = true;
-    S.searchError = '';
-    renderSearchResults();
     const btn = form.querySelector('button[type="submit"]');
-    await withBusy(btn, async () => {
+    if (btn && btn.dataset.busy === '1') return;
+    // 每次搜索一个序号：慢请求回来时如果已经不是最新那次，直接丢弃
+    const seq = ++S.searchSeq;
+    const query = `search?q=${encodeURIComponent(q)}&baseId=${encodeURIComponent(baseId)}`;
+
+    S.searchResult = null;
+    S.searchError = '';
+    S.searchLoading = true;
+    S.searchPending = false;
+    S.searchStage = '正在搜索站点…';
+    startSearchTicker();
+    renderSearchResults();
+    if (btn) {
+      btn.dataset.busy = '1';
+      btn.classList.add('is-busy');
+      btn.disabled = true;
+    }
+
+    try {
+      // 第一阶段：番剧 / 发布组 / 主页大小，先让结果可见
+      let core;
       try {
-        const r = await api(`search?q=${encodeURIComponent(q)}&baseId=${encodeURIComponent(baseId)}`);
-        S.searchResult = r;
-        S.searchLoading = false;
-        renderSearchResults();
+        core = await api(`${query}&phase=core`);
       } catch (e) {
+        if (seq !== S.searchSeq) return;
+        stopSearchTicker();
         S.searchLoading = false;
         S.searchError = e.message;
         renderSearchResults();
+        return;
+      } finally {
+        if (seq === S.searchSeq && btn) {
+          btn.classList.remove('is-busy');
+          btn.disabled = false;
+          delete btn.dataset.busy;
+        }
       }
-    });
+      if (seq !== S.searchSeq) return;
+      S.searchResult = core;
+      S.searchLoading = false;
+      S.searchPending = !!core.pending && core.results.length > 0;
+      S.searchStage = '正在补齐字幕组体积…';
+      // 第二阶段的秒表从 core 返回时重新计，避免把首屏耗时算进「补齐体积」
+      S.searchStartedAt = Date.now();
+      S.searchElapsed = 0;
+      renderSearchResults();
+
+      // 第二阶段：字幕组 RSS 的精确集数 / 种子体积，回来后原地替换
+      if (!S.searchPending) {
+        stopSearchTicker();
+        return;
+      }
+      try {
+        const full = await api(`${query}&phase=full`);
+        if (seq !== S.searchSeq) return;
+        S.searchResult = full;
+        S.searchPending = false;
+        stopSearchTicker();
+        renderSearchResults();
+      } catch (e) {
+        if (seq !== S.searchSeq) return;
+        S.searchPending = false;
+        stopSearchTicker();
+        renderSearchResults();
+        toast(`体积统计未完成，先显示番组主页大小：${e.message}`, 'warn');
+      }
+    } finally {
+      if (seq === S.searchSeq && btn && btn.dataset.busy === '1') {
+        btn.classList.remove('is-busy');
+        btn.disabled = false;
+        delete btn.dataset.busy;
+      }
+    }
   }
 
   function pickSubgroup(el) {
@@ -3317,6 +3436,11 @@
     S.modal = null;
     S.subTemplate = null;
     S.modalDirty = false;
+    // 关窗后不再关心进行中的搜索：停掉计时并把序号推高，回来的响应会被丢弃
+    stopSearchTicker();
+    S.searchSeq++;
+    S.searchLoading = false;
+    S.searchPending = false;
     syncLock();
   }
 

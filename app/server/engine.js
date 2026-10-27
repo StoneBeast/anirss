@@ -27,6 +27,7 @@ const {
 } = require('./util');
 const { fetchFeed } = require('./rss');
 const { fetchBuffer, isHtmlResponse } = require('./http');
+const { createLimiter } = require('./limiter');
 const { QBClient } = require('./qb');
 const hardlink = require('./hardlink');
 const { extractArchive, archiveKind, MAX_TOTAL_BYTES } = require('./archive');
@@ -40,6 +41,75 @@ const {
 const MAX_PREVIEW_ITEMS = 150;
 const MAX_DOWNLOADS = 1500;
 const MAX_LOGS = 300;
+
+// 站点搜索的并发与超时上限。
+// 实测 Mikan 单条请求 p90 ≈ 1.5~2s，12 个单集页 4 并发要 3 轮、6 并发只要 2 轮；
+// 再高（8/12）会出现 20s 级慢响应，所以 6 条在飞是「轮数」与「站点耐受」的折中。
+// 单集页 / 主页 / 字幕组 RSS 混发时并发一高同样变慢，因此共用同一个 host 级闸门（limiter.js）。
+const SEARCH_MAX_INFLIGHT = 6;
+// 下面几个 deadline 是「整个请求」的上限：http.js 的 timeout 只约束连接空闲，
+// 站点慢速回传时单条请求能拖到 20~30s，必须另有硬上限。
+const SEARCH_FEED_DEADLINE = 8000;
+const SEARCH_EPISODE_DEADLINE = 5000;
+const SEARCH_EPISODE_BUDGET = 8000;
+const SEARCH_HOME_DEADLINE = 7000;
+const SEARCH_RSS_DEADLINE = 5000;
+// 一次搜索最长等待：超出就返回已经拿到的部分，不再空等
+const SEARCH_CORE_BUDGET = 12000;
+const SEARCH_BUDGET = 14000;
+const SEARCH_JOB_TTL = 5 * 60000;
+
+/** 搜索结果排序：集数多的在前，其次是本次命中数，最后按字幕组 id */
+function compareSubgroup(a, b) {
+  return (b.episodeCount - a.episodeCount) || (b.matched - a.matched) || Number(a.id) - Number(b.id);
+}
+
+/** 把字幕组 RSS 的统计结果合并进搜索结果项（体积优先取种子真实长度） */
+function applySubgroupRss(s, rss) {
+  if (rss.count > s.episodeCount) {
+    s.episodeCount = rss.count;
+    s.episodeText = episodeRanges(rss.episodes);
+    s.countSource = 'rss';
+  } else if (rss.episodes.length) {
+    s.countSource = 'rss';
+  }
+  s.rssItems = rss.items;
+  s.specials = Math.max(s.specials || 0, rss.specials || 0);
+  if (rss.sizeCount > 0 && rss.sizeCount >= (s.sizeCount || 0)) {
+    s.sizeMin = rss.sizeMin;
+    s.sizeMax = rss.sizeMax;
+    s.sizeCount = rss.sizeCount;
+  }
+  if (rss.batchSize > 0 && rss.batchSize >= (s.batchSize || 0)) {
+    s.batchSize = rss.batchSize;
+    s.batchLabel = rss.batchLabel;
+    s.batchCount = rss.batchCount;
+    s.batch = true;
+  }
+  return s;
+}
+
+/** 在剩余预算内等待 promise；超时只是提前返回，不取消已经发出的请求 */
+async function raceBudget(promise, deadlineAt, onTimeout) {
+  const remain = deadlineAt - nowMs();
+  if (!(remain > 0)) {
+    if (onTimeout) onTimeout();
+    return;
+  }
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      if (onTimeout) onTimeout();
+      resolve();
+    }, remain);
+    if (timer.unref) timer.unref();
+  });
+  try {
+    await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function sortByNewest(list) {
   return list.slice().sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
@@ -83,7 +153,14 @@ class Engine {
     // 封面/远程图片按字节预算淘汰（单图上限 8MB，按条数淘汰最坏能吃掉数百 MB 内存）
     this.coverCache = new ByteLruCache(64 * 1024 * 1024, 200);
     this.resolveCache = new Map();
-    this.searchCache = new Map();
+    // 站点搜索：job 级缓存（core 与 full 共享抓取结果）+ 各类出站请求的 in-flight 去重
+    this.searchJobs = new Map();
+    this.searchFeedCache = new Map();
+    this.episodePending = new Map();
+    this.homePending = new Map();
+    this.subgroupPending = new Map();
+    // 每个站点一条请求队列，避免搜索把站点打爆（见 limiter.js）
+    this.searchLimiters = new Map();
     this.episodeCache = new Map();
     this.homeMetaCache = new Map();
     this.subgroupCache = new Map();
@@ -1427,17 +1504,52 @@ class Engine {
   async fetchEpisodeInfo(baseUrl, hash) {
     const cached = this.episodeCache.get(hash);
     if (cached && nowMs() - cached.at < 10 * 60000) return cached.data;
-    const pageUrl = `${String(baseUrl).replace(/\/+$/, '')}/Home/Episode/${hash}`;
-    const res = await fetchBuffer(pageUrl, {
-      timeout: 15000,
-      maxBytes: 2 * 1024 * 1024,
-      headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
-      proxy: this.data.proxy,
+    return this.dedupe(this.episodePending, hash, async () => {
+      const pageUrl = `${String(baseUrl).replace(/\/+$/, '')}/Home/Episode/${hash}`;
+      const res = await this.searchFetch(pageUrl, () => fetchBuffer(pageUrl, {
+        timeout: 15000,
+        deadline: SEARCH_EPISODE_DEADLINE,
+        maxBytes: 2 * 1024 * 1024,
+        headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
+        proxy: this.data.proxy,
+      }));
+      const data = parseEpisodePage(res.buffer.toString('utf8'), res.url || pageUrl);
+      this.episodeCache.set(hash, { at: nowMs(), data });
+      if (this.episodeCache.size > 200) this.episodeCache.delete(this.episodeCache.keys().next().value);
+      return data;
     });
-    const data = parseEpisodePage(res.buffer.toString('utf8'), res.url || pageUrl);
-    this.episodeCache.set(hash, { at: nowMs(), data });
-    if (this.episodeCache.size > 200) this.episodeCache.delete(this.episodeCache.keys().next().value);
-    return data;
+  }
+
+  /** 站点级并发闸门：一次搜索的单集页 / 主页 / RSS 共用同一个队列 */
+  searchLimiterFor(url) {
+    let origin = '';
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      origin = String(url);
+    }
+    let limiter = this.searchLimiters.get(origin);
+    if (!limiter) {
+      limiter = createLimiter(SEARCH_MAX_INFLIGHT);
+      this.searchLimiters.set(origin, limiter);
+    }
+    return limiter;
+  }
+
+  /** 在 host 级闸门内排队抓取（priority='high' 用于卡住整体进度的请求） */
+  searchFetch(url, run, priority) {
+    return this.searchLimiterFor(url).run(run, { priority: priority === 'high' ? 'high' : 'normal' });
+  }
+
+  /** 简单的 in-flight 去重：同 key 的并发请求共享同一个 Promise */
+  dedupe(map, key, factory) {
+    const existing = map.get(key);
+    if (existing) return existing;
+    const promise = Promise.resolve().then(factory).finally(() => {
+      if (map.get(key) === promise) map.delete(key);
+    });
+    map.set(key, promise);
+    return promise;
   }
 
   /** 某个字幕组的 RSS 里实际有多少集（比主页最近列表更准确） */
@@ -1445,8 +1557,14 @@ class Engine {
     const key = `${bangumiId}|${subgroupId}`;
     const cached = this.subgroupCache.get(key);
     if (cached && nowMs() - cached.at < 15 * 60000) return cached.data;
+    // 预热与收尾阶段可能同时要同一份 RSS，合并成一次请求
+    return this.dedupe(this.subgroupPending, key, () => this.fetchSubgroupRssOnce(baseUrl, bangumiId, subgroupId));
+  }
+
+  async fetchSubgroupRssOnce(baseUrl, bangumiId, subgroupId) {
+    const key = `${bangumiId}|${subgroupId}`;
     const url = rssUrlFor(baseUrl, bangumiId, subgroupId);
-    const feed = await fetchFeed(url, { timeout: 20000, proxy: this.data.proxy });
+    const feed = await this.searchFetch(url, () => fetchFeed(url, { timeout: 20000, deadline: SEARCH_RSS_DEADLINE, proxy: this.data.proxy }));
     const episodes = new Set();
     const sizeEntries = [];
     let specials = 0;
@@ -1482,34 +1600,166 @@ class Engine {
     return data;
   }
 
-  async fetchHomeMetaFor(homeUrl) {    const cached = this.homeMetaCache.get(homeUrl);
+  async fetchHomeMetaFor(homeUrl) {
+    const cached = this.homeMetaCache.get(homeUrl);
     if (cached && nowMs() - cached.at < 10 * 60000) return cached.data;
-    const res = await fetchBuffer(homeUrl, {
-      timeout: 20000,
-      maxBytes: 6 * 1024 * 1024,
-      headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
-      proxy: this.data.proxy,
+    return this.dedupe(this.homePending, homeUrl, async () => {
+      const res = await this.searchFetch(homeUrl, () => fetchBuffer(homeUrl, {
+        timeout: 20000,
+        deadline: SEARCH_HOME_DEADLINE,
+        maxBytes: 6 * 1024 * 1024,
+        headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
+        proxy: this.data.proxy,
+      }), 'high');
+      const data = parseMikanHome(res.buffer.toString('utf8'), res.url || homeUrl);
+      this.homeMetaCache.set(homeUrl, { at: nowMs(), data });
+      if (this.homeMetaCache.size > 100) this.homeMetaCache.delete(this.homeMetaCache.keys().next().value);
+      return data;
     });
-    const data = parseMikanHome(res.buffer.toString('utf8'), res.url || homeUrl);
-    this.homeMetaCache.set(homeUrl, { at: nowMs(), data });
-    if (this.homeMetaCache.size > 100) this.homeMetaCache.delete(this.homeMetaCache.keys().next().value);
+  }
+
+  /** 站点搜索 RSS：core / full 两次请求共用同一份结果；快速失败时重试一次 */
+  async fetchSearchFeed(url) {
+    const cached = this.searchFeedCache.get(url);
+    if (cached && nowMs() - cached.at < 5 * 60000) return cached.data;
+    let feed = null;
+    let lastError = null;
+    const started = nowMs();
+    for (let attempt = 0; attempt < 2 && !feed; attempt++) {
+      try {
+        feed = await this.searchFetch(
+          url,
+          () => fetchFeed(url, { timeout: 20000, deadline: SEARCH_FEED_DEADLINE, proxy: this.data.proxy }),
+          'high'
+        );
+      } catch (e) {
+        lastError = e;
+        const retryable = e && (e.code === 'NETWORK' || e.code === 'TIMEOUT');
+        // 只有「很快就失败」才值得重试：站点整体很慢时再等一轮只会让首屏更久
+        if (!retryable || nowMs() - started > 4000) break;
+      }
+    }
+    if (!feed) throw lastError || httpError(502, '站点搜索失败', 'SEARCH_FAILED');
+    const data = { title: feed.title || '', items: feed.items || [] };
+    this.searchFeedCache.set(url, { at: nowMs(), data });
+    if (this.searchFeedCache.size > 40) this.searchFeedCache.delete(this.searchFeedCache.keys().next().value);
     return data;
   }
 
-  /** 在配置好的站点里搜索番剧，返回番剧 + 发布组（字幕组）列表 */
-  async searchBangumi(input) {
-    const src = input || {};
-    const q = String(src.q || src.query || '').trim();
-    if (!q) throw badRequest('请输入要搜索的番剧名', 'EMPTY_QUERY');
-    if (q.length > 60) throw badRequest('搜索关键词过长', 'QUERY_TOO_LONG');
-    const base = this.pickSearchBase(src.baseId);
-    const limit = Math.min(24, Math.max(4, Number(src.limit) || 12));
-    const cacheKey = `${base.id}|${q.toLowerCase()}|${limit}`;
-    const cached = this.searchCache.get(cacheKey);
-    if (cached && nowMs() - cached.at < 5 * 60000) return cached.data;
+  /**
+   * 一次搜索对应一个 job：`core` 在「站点搜索 + 单集页 + 番组主页」就绪时返回；
+   * `enrich()` 再补字幕组 RSS（体积 / 精确集数）。core 与 full 两次请求共享同一批抓取，
+   * 不会把同样的页面抓两遍。
+   */
+  searchJobFor(base, q, limit) {
+    const key = `${base.id}|${q.toLowerCase()}|${limit}`;
+    const now = nowMs();
+    for (const [k, job] of this.searchJobs) {
+      if (now - job.at > SEARCH_JOB_TTL) this.searchJobs.delete(k);
+    }
+    const existing = this.searchJobs.get(key);
+    if (existing) return existing;
 
+    const job = {
+      key,
+      at: now,
+      t0: now,
+      base,
+      query: q,
+      timings: {},
+      data: null,
+      groups: [],
+      enriched: false,
+      enrichPromise: null,
+    };
+    job.core = this.runSearchCore(job, base, q, limit);
+    job.core.catch(() => {
+      if (this.searchJobs.get(key) === job) this.searchJobs.delete(key);
+    });
+    this.searchJobs.set(key, job);
+    if (this.searchJobs.size > 40) {
+      for (const k of this.searchJobs.keys()) {
+        if (k !== key) {
+          this.searchJobs.delete(k);
+          break;
+        }
+      }
+    }
+    return job;
+  }
+
+  /** 第一阶段结果：番剧 / 发布组 / 集数（来自番组主页），体积先给主页大小 */
+  searchCoreView(job) {
+    return {
+      ...job.data,
+      // 命中已经补全过的缓存时直接按完成返回，客户端就不必再请求 full
+      enriched: !!job.enriched,
+      pending: !job.enriched,
+      phase: 'core',
+      timings: { ...job.timings, total: nowMs() - job.t0 },
+    };
+  }
+
+  /** 第二阶段结果：字幕组 RSS 校正过后的精确集数与体积 */
+  searchFullView(job) {
+    return {
+      ...job.data,
+      enriched: true,
+      pending: false,
+      phase: 'full',
+      timings: { ...job.timings, total: nowMs() - job.t0 },
+    };
+  }
+
+  async enrichSearch(job) {
+    await job.core;
+    if (!job.enriched) {
+      if (!job.enrichPromise) {
+        job.enrichPromise = this.runSearchEnrich(job);
+        job.enrichPromise.catch(() => {});
+      }
+      await job.enrichPromise;
+    }
+    return this.searchFullView(job);
+  }
+
+  async runSearchEnrich(job) {
+    const started = nowMs();
+    job.timings.rssPartial = false;
+    const work = Promise.all(job.groups.map((g) => this.enrichGroupRss(job, g)));
+    work.catch(() => {});
+    await raceBudget(work, job.t0 + SEARCH_BUDGET, () => { job.timings.rssPartial = true; });
+    job.timings.rss = nowMs() - started;
+    // 超时只当作「这次先这样」：标记未完成，下一次搜索会补上缺的那几个字幕组
+    job.enriched = !job.timings.rssPartial;
+    job.at = nowMs(); // 完整结果的缓存有效期从这里算
+    const suffix = job.timings.rssPartial ? '（部分字幕组超时，先返回主页大小）' : '';
+    this.log('info', `搜索「${job.query}」体积统计：${job.timings.rss}ms${suffix}`);
+  }
+
+  /** 每个番剧组：用字幕组 RSS 校正集数与体积（最多 10 个发布组，请求由站点闸门排队） */
+  async enrichGroupRss(job, g) {
+    const candidates = g.merged
+      .slice()
+      .sort((a, b) => (b.matched - a.matched) || (b.episodeCount - a.episodeCount))
+      .slice(0, 10);
+    await Promise.all(candidates.map(async (s) => {
+      try {
+        applySubgroupRss(s, await this.fetchSubgroupRss(job.base.url, g.bangumiId, s.id));
+      } catch {
+        s.countSource = s.countSource || 'home';
+      }
+    }));
+    g.merged.sort(compareSubgroup);
+    g.result.subgroups = g.merged.slice(0, 40);
+  }
+
+  /** 第一阶段：站点搜索 RSS → 单集页（拿番组/字幕组）→ 番组主页（名称/封面/集数/大小） */
+  async runSearchCore(job, base, q, limit) {
+    const tFeed = nowMs();
     const searchUrl = `${String(base.url).replace(/\/+$/, '')}/RSS/Search?searchStr=${encodeURIComponent(q)}`;
-    const feed = await fetchFeed(searchUrl, { timeout: 20000, proxy: this.data.proxy });
+    const feed = await this.fetchSearchFeed(searchUrl);
+    job.timings.feed = nowMs() - tFeed;
 
     const episodes = [];
     const seen = new Set();
@@ -1525,22 +1775,42 @@ class Engine {
       if (episodes.length >= limit) break;
     }
     if (!episodes.length) throw httpError(404, `没有找到与「${q}」匹配的番剧`, 'SEARCH_EMPTY');
+    job.timings.episodeCount = episodes.length;
 
-    // 并发抓取单集页面，拿到所属番剧与字幕组（限制 4 并发）
+    // 单集页只需要番组 id：拿到就立刻并行拉主页，不再等所有单集页结束
     const details = [];
-    let cursor = 0;
-    const workers = Array.from({ length: Math.min(4, episodes.length) }, async () => {
-      while (cursor < episodes.length) {
-        const ep = episodes[cursor++];
-        try {
-          const info = await this.fetchEpisodeInfo(base.url, ep.hash);
-          details.push({ ...ep, ...info });
-        } catch {
-          details.push({ ...ep, bangumiId: '', subgroupId: '', title: ep.title });
-        }
+    const homeTasks = new Map();
+    const ensureHome = (bangumiId) => {
+      if (!homeTasks.has(bangumiId)) {
+        const task = this.fetchHomeMetaFor(homeUrlFor(base.url, bangumiId)).catch(() => null);
+        homeTasks.set(bangumiId, task);
+      }
+      return homeTasks.get(bangumiId);
+    };
+
+    const tEpisodes = nowMs();
+    // 单集页总预算 + 整体预算取小：站点慢的时候宁可少统计几条，也不要让首屏等十几秒
+    const episodeBudget = Math.min(tEpisodes + SEARCH_EPISODE_BUDGET, job.t0 + SEARCH_CORE_BUDGET);
+    let pageFailures = 0;
+    // 请求本身由站点级闸门（SEARCH_MAX_INFLIGHT）限流，这里一次把任务全部排上队
+    const tasks = episodes.map(async (ep) => {
+      if (nowMs() > episodeBudget) {
+        job.timings.episodesTruncated = true;
+        return;
+      }
+      try {
+        const info = await this.fetchEpisodeInfo(base.url, ep.hash);
+        details.push({ ...ep, ...info });
+        if (info.bangumiId) ensureHome(info.bangumiId);
+      } catch {
+        pageFailures++;
+        details.push({ ...ep, bangumiId: '', subgroupId: '', title: ep.title });
       }
     });
-    await Promise.all(workers);
+    const pool = Promise.all(tasks);
+    pool.catch(() => {});
+    await raceBudget(pool, episodeBudget, () => { job.timings.episodesTruncated = true; });
+    job.timings.episodes = nowMs() - tEpisodes;
 
     const groups = new Map();
     for (const d of details) {
@@ -1566,9 +1836,18 @@ class Engine {
       }
     }
 
+    // 一条单集页都没抓到（站点超时/被限速）时，别把它当成「没有匹配的番剧」返回
+    if (!groups.size) {
+      const unfetched = episodes.length - details.length;
+      if (pageFailures > 0 || unfetched > 0 || job.timings.episodesTruncated) {
+        throw httpError(504, '站点单集页面响应过慢，请稍后重试（搜索未完成）', 'SEARCH_TIMEOUT');
+      }
+      throw httpError(404, `没有找到与「${q}」匹配的番剧`, 'SEARCH_EMPTY');
+    }
+
+    const tHome = nowMs();
     const results = await Promise.all(Array.from(groups.values()).map(async (g) => {
-      let home = null;
-      try { home = await this.fetchHomeMetaFor(g.homeUrl); } catch { /* 名称用兜底 */ }
+      const home = await ensureHome(g.bangumiId);
       const homeSubs = (home && home.subgroups) || [];
       const byId = new Map(homeSubs.map((s) => [String(s.id), s]));
       const merged = [];
@@ -1604,75 +1883,59 @@ class Engine {
           rssUrl: rssUrlFor(base.url, g.bangumiId, s.id),
         });
       }
-      merged.sort((a, b) => (b.episodeCount - a.episodeCount) || (b.matched - a.matched) || Number(a.id) - Number(b.id));
+      merged.sort(compareSubgroup);
 
-      // 主页只列最近若干集；再按字幕组 RSS 校正真实集数（最多 10 个发布组）
-      const candidates = merged.slice().sort((a, b) => (b.matched - a.matched) || (b.episodeCount - a.episodeCount)).slice(0, 10);
-      let cursor = 0;
-      const workers = Array.from({ length: Math.min(4, candidates.length) }, async () => {
-        while (cursor < candidates.length) {
-          const s = candidates[cursor++];
-          try {
-            const rss = await this.fetchSubgroupRss(base.url, g.bangumiId, s.id);
-            if (rss.count > s.episodeCount) {
-              s.episodeCount = rss.count;
-              s.episodeText = episodeRanges(rss.episodes);
-              s.countSource = 'rss';
-            } else if (rss.episodes.length) {
-              s.countSource = 'rss';
-            }
-            s.rssItems = rss.items;
-            s.specials = Math.max(s.specials || 0, rss.specials || 0);
-            // RSS 里的 enclosure 长度就是整份种子的内容大小，比主页取整后的文本更准
-            if (rss.sizeCount > 0 && rss.sizeCount >= (s.sizeCount || 0)) {
-              s.sizeMin = rss.sizeMin;
-              s.sizeMax = rss.sizeMax;
-              s.sizeCount = rss.sizeCount;
-            }
-            if (rss.batchSize > 0 && rss.batchSize >= (s.batchSize || 0)) {
-              s.batchSize = rss.batchSize;
-              s.batchLabel = rss.batchLabel;
-              s.batchCount = rss.batchCount;
-              s.batch = true;
-            }
-          } catch {
-            s.countSource = s.countSource || 'home';
-          }
-        }
-      });
-      await Promise.all(workers);
-      merged.sort((a, b) => (b.episodeCount - a.episodeCount) || (b.matched - a.matched) || Number(a.id) - Number(b.id));
-
-      const total = Number(String((home && home.episodes) || '').replace(/[^\d]/g, ''))
-        || merged.reduce((max, s) => Math.max(max, s.episodeCount || 0), 0);
-      return {
+      const result = {
         bangumiId: g.bangumiId,
         title: (home && home.title) || g.title,
         cover: (home && home.cover) || g.cover,
         homeUrl: g.homeUrl,
         airWeekday: (home && home.airWeekday) || '',
         episodes: (home && home.episodes) || '',
-        episodeTotal: total,
+        episodeTotal: Number(String((home && home.episodes) || '').replace(/[^\d]/g, ''))
+          || merged.reduce((max, s) => Math.max(max, s.episodeCount || 0), 0),
         bgmUrl: (home && home.bgmUrl) || '',
         matched: g.hitCount,
         hitCount: g.hitCount,
         subgroups: merged.slice(0, 40),
       };
+      job.groups.push({ bangumiId: g.bangumiId, merged, result, home });
+      return result;
     }));
+    job.timings.homeWait = nowMs() - tHome;
 
     results.sort((a, b) => b.hitCount - a.hitCount || a.title.localeCompare(b.title, 'zh'));
-    const data = {
+    job.data = {
       query: q,
       baseId: base.id,
       baseName: base.name,
-      searchedAt: nowMs(),
+      searchedAt: job.t0,
       totalEpisodes: episodes.length,
       results,
     };
-    this.searchCache.set(cacheKey, { at: nowMs(), data });
-    if (this.searchCache.size > 60) this.searchCache.delete(this.searchCache.keys().next().value);
-    this.log('info', `搜索「${q}」：${results.length} 部番剧 / ${episodes.length} 条单集（${base.name}）`);
-    return data;
+    job.timings.core = nowMs() - job.t0;
+    const t = job.timings;
+    this.log('info', `搜索「${q}」：${results.length} 部番剧 / ${episodes.length} 条单集`
+      + `（feed ${t.feed}ms / 单集 ${t.episodes}ms / 主页等待 ${t.homeWait}ms，共 ${t.core}ms）`);
+    return job.data;
+  }
+
+  /**
+   * 在配置好的站点里搜索番剧，返回番剧 + 发布组（字幕组）列表。
+   * `phase=core` 只等到「番剧 / 发布组 / 主页大小」，`phase=full`（默认）再补字幕组 RSS 的精确体积。
+   */
+  async searchBangumi(input) {
+    const src = input || {};
+    const q = String(src.q || src.query || '').trim();
+    if (!q) throw badRequest('请输入要搜索的番剧名', 'EMPTY_QUERY');
+    if (q.length > 60) throw badRequest('搜索关键词过长', 'QUERY_TOO_LONG');
+    const base = this.pickSearchBase(src.baseId);
+    const limit = Math.min(24, Math.max(4, Number(src.limit) || 12));
+    const phase = src.phase === 'core' ? 'core' : 'full';
+    const job = this.searchJobFor(base, q, limit);
+    await job.core;
+    if (phase === 'core') return this.searchCoreView(job);
+    return this.enrichSearch(job);
   }
 
   isAllowedImageHost(rawUrl) {
@@ -2554,6 +2817,8 @@ class Engine {
     this.store._normalize();
     this.cache.clear();
     this.homeMetaCache.clear();
+    this.searchJobs.clear();
+    this.searchFeedCache.clear();
     this.store.save();
     this.log('info', `已导入配置：站点 ${counts.bases || 0}、路径 ${counts.paths || 0}、追番 ${counts.subs || 0}、补番 ${counts.extras || 0}`);
     return {

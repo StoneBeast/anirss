@@ -355,7 +355,12 @@ async function handleApi(req, res, pathname, query) {
   if (pathname === '/api/search' && method === 'GET') {
     return sendJson(res, 200, {
       ok: true,
-      ...(await engine.searchBangumi({ q: query.q, baseId: query.baseId, limit: query.limit })),
+      ...(await engine.searchBangumi({
+        q: query.q,
+        baseId: query.baseId,
+        limit: query.limit,
+        phase: query.phase,
+      })),
     });
   }
 

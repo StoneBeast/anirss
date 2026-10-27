@@ -9,6 +9,14 @@ const { agentFor } = require('./agents');
 
 const MAX_REDIRECTS = 5;
 
+function safeHost(rawUrl) {
+  try {
+    return new URL(rawUrl).host;
+  } catch {
+    return String(rawUrl || '');
+  }
+}
+
 function decompress(buf, encoding) {
   const enc = String(encoding || '').toLowerCase().trim();
   if (!enc || enc === 'identity') return buf;
@@ -30,6 +38,8 @@ function decompress(buf, encoding) {
 
 /**
  * 抓取一个 URL（GET），跟随重定向、自动解压、限制大小。
+ * `timeout` 只约束连接空闲（站点慢速回传时可以远超它），
+ * `deadline` 是整个请求的硬上限（含重定向与回传），两者可以同时给。
  * @returns {Promise<{buffer:Buffer, headers:object, status:number, url:string, contentType:string}>}
  */
 function fetchBuffer(inputUrl, opts) {
@@ -48,16 +58,37 @@ function fetchBuffer(inputUrl, opts) {
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let currentReq = null;
+    let deadlineTimer = null;
+    const clearDeadline = () => {
+      if (deadlineTimer) {
+        clearTimeout(deadlineTimer);
+        deadlineTimer = null;
+      }
+    };
     const fail = (err) => {
       if (settled) return;
       settled = true;
+      clearDeadline();
       reject(err);
     };
     const done = (value) => {
       if (settled) return;
       settled = true;
+      clearDeadline();
       resolve(value);
     };
+
+    if (options.deadline > 0) {
+      deadlineTimer = setTimeout(() => {
+        const seconds = Math.max(1, Math.round(options.deadline / 1000));
+        fail(httpError(504, `请求超时（总时长 ${seconds} 秒）：${safeHost(inputUrl)}`, 'TIMEOUT'));
+        if (currentReq) {
+          try { currentReq.destroy(); } catch { /* ignore */ }
+        }
+      }, options.deadline);
+      if (deadlineTimer.unref) deadlineTimer.unref();
+    }
 
     const go = async (target, redirectsLeft) => {
       let u;
@@ -166,6 +197,7 @@ function fetchBuffer(inputUrl, opts) {
       const req = useMergedOptions
         ? mod.request(Object.assign({}, plan.target, reqOptions), onResponse)
         : mod.request(plan ? plan.target : u, reqOptions, onResponse);
+      currentReq = req;
 
       req.on('timeout', () => {
         req.destroy();

@@ -21,7 +21,8 @@ const { buildZip } = require('./zip-builder');
 const NODE = process.execPath;
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = path.join(ROOT, 'app', 'server', 'index.js');
-const DATA_DIR = path.join(ROOT, '..', 'work', 'anirss-smoke-data');
+// 默认放在仓库外的 work/ 下；沙箱或 CI 里可以用 ANIRSS_SMOKE_DATA 指到可写目录
+const DATA_DIR = process.env.ANIRSS_SMOKE_DATA || path.join(ROOT, '..', 'work', 'anirss-smoke-data');
 const APP_PORT = 8788;
 const QB_PORT = 18080;
 const RSS_PORT = 18081;
@@ -740,6 +741,33 @@ async function main() {
     assert.strictEqual(hitSubC.batchSize, Math.round(9.8 * 1024 * 1024 * 1024));
     assert.strictEqual(hitSubC.batchLabel, '第 1–12 集');
     console.log('✓ 站点搜索：番剧 + 发布组 + 真实集数 + 体积范围/合集合计');
+
+    // 两段式搜索：core 先返回（体积取番组主页大小），full 再用字幕组 RSS 校正
+    // 用 limit=8 让缓存键与上面的默认搜索区分开，才能看到未 enrich 的 core
+    const CORE_QUERY = `q=${encodeURIComponent('久留美')}&baseId=${mockBaseId}&limit=8`;
+    const core = await api(`/api/search?${CORE_QUERY}&phase=core`);
+    assert.strictEqual(core.phase, 'core', JSON.stringify(core.timings));
+    assert.strictEqual(core.pending, true);
+    assert.strictEqual(core.enriched, false);
+    assert.ok(core.timings && core.timings.total >= 0, 'core 应带 timings');
+    const coreHit = core.results[0];
+    assert.strictEqual(coreHit.bangumiId, '4059');
+    const coreSubA = coreHit.subgroups.find((s) => s.id === '203');
+    assert.ok(coreSubA, JSON.stringify(coreHit.subgroups.map((s) => s.id)));
+    // 主页大小列：300 / 301 / 302 MB 中取最小/最大
+    assert.strictEqual(coreSubA.sizeMin, 300 * 1024 * 1024);
+    assert.strictEqual(coreSubA.sizeMax, 302 * 1024 * 1024);
+    assert.strictEqual(coreSubA.countSource, undefined, 'core 阶段还没读字幕组 RSS');
+    const coreSubC = coreHit.subgroups.find((s) => s.id === '900');
+    assert.strictEqual(coreSubC.batchSize, Math.round(9.8 * 1024 * 1024 * 1024), 'core 也应显示主页的合集合计大小');
+    const enriched = await api(`/api/search?${CORE_QUERY}&phase=full`);
+    assert.strictEqual(enriched.phase, 'full');
+    assert.strictEqual(enriched.pending, false);
+    assert.strictEqual(enriched.enriched, true);
+    const enrichedSubA = enriched.results[0].subgroups.find((s) => s.id === '203');
+    assert.strictEqual(enrichedSubA.countSource, 'rss', 'full 阶段应由字幕组 RSS 校正');
+    assert.strictEqual(enrichedSubA.sizeMax, 302 * 1024 * 1024);
+    console.log('✓ 两段式搜索：core 先出主页大小，full 再补 RSS 精确体积');
 
     // 集数识别工具
     const guessed = await api('/api/guess-episode', {

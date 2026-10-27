@@ -11,8 +11,8 @@
 ## 测试
 
 ```bash
-node dev/unit.js        # 单元测试（21 项）：RSS 2.0 / Atom、实体解码、正则、URL 拼接、infohash、集数识别、硬链接规划
-node dev/smoke.js       # 端到端烟测（43 项）：拉起真实服务 + 内置假 qBittorrent / 假 RSS 站点
+node dev/unit.js        # 单元测试（29 项）：RSS 2.0 / Atom、实体解码、正则、URL 拼接、infohash、集数识别、硬链接规划
+node dev/smoke.js       # 端到端烟测（46 项）：拉起真实服务 + 内置假 qBittorrent / 假 RSS 站点
 node dev/perf-check.js  # 性能行为验证：静态资源与 /api/state 的 gzip、ETag/304、写盘合并
 node dev/ui-actions.js  # 浏览器交互测试（75 项）：需要 Chrome CDP 9222 + 演示实例 8777
 node dev/ui-subs-check.js # 字幕弹窗抽查：弹窗打开、zip 上传入库、列表刷新（同上前提）
@@ -28,6 +28,25 @@ node dev/ui-empty.js    # 空数据首启引导截图
 - **/api/state**：前端每 12 秒轮询，带 ETag；数据没变（`store.rev` + 检查队列指纹）返回 304，跳过全量重建与序列化；响应按需 gzip。
 - **出站连接复用**：qBittorrent API 与 RSS 抓取使用 keep-alive 连接池（`app/server/agents.js`），省掉每次请求的 TCP/TLS 握手。
 - **解析热点缓存**：RSS 标签正则按标签名编译一次复用；集数识别 `guessEpisode` 按标题缓存。
+
+### 站点搜索为什么慢 / 怎么快的
+
+搜索一次要打站点很多页面，实测（mikanime.tv，12 条搜索命中、1~3 部番剧）：
+
+| 阶段 | 请求数 | 单条 p50 | 耗时 |
+| --- | --- | --- | --- |
+| 站点搜索 RSS | 1 | 0.9~1.8s | 0.9~1.8s |
+| 单集页（拿番组/字幕组 id） | 12 | 0.9s | 4~7s |
+| 番组主页（名称/封面/集数/大小列） | 1~3 | 0.5~2.4s | 与单集页重叠 |
+| 字幕组 RSS（精确集数/种子体积） | 10~20 | 0.4~2s | 2~5s |
+
+改造前是一次性等全部阶段（约 9~11s），所以点搜索要愣很久。现在的做法：
+
+- **站点级并发闸门**（`app/server/limiter.js`）：一次搜索的单集页 / 主页 / RSS 共用每个 origin 6 条在飞的队列。实测单条 p90 ≈ 1.5~2s，12 个单集页 4 并发要 3 轮、6 并发只要 2 轮；再高（8/12 并发）站点会给出 20s 级慢响应。主页是「卡住整体进度」的请求，走 high 优先队列。
+- **请求硬超时**：`http.js` 的 `deadline` 限制整个请求（含重定向与慢速回传）。原来的 `timeout` 只管连接空闲，站点慢速回传能拖到 20~30s。
+- **阶段预算**：单集页总预算 8s、首屏 12s、整次搜索 14s，超预算就带着已有结果返回（`timings.episodesTruncated` / `timings.rssPartial`），不再空等。
+- **两段式返回**：`/api/search?phase=core` 在「搜索 RSS + 单集页 + 主页」就绪时先返回（体积用主页大小列），`phase=full` 再用字幕组 RSS 校正精确集数与种子体积。前端先渲染 core，full 回来后原地替换，首屏从 ~9s 降到 4~7s。
+- **抓取复用**：同一查询的 core / full 共用一个 job（`searchJobs`），搜索 RSS、单集页、主页、字幕组 RSS 都有 TTL 缓存 + in-flight 去重，第二次请求不会重复抓。
 
 ```bash
 # 演示数据（假 qB、假 RSS、4 个追番、4 条补番记录、5 个预设）
@@ -45,7 +64,7 @@ ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
 fnpack.exe build -d <项目目录>
 
 # 2) 修正 cmd/ 权限并改名输出
-python dev/repack-fpk.py anirss.fpk anirss-1.13.0.fpk
+python dev/repack-fpk.py anirss.fpk anirss-1.13.1.fpk
 ```
 
 `repack-fpk.py` 只重写外层 tar（把生命周期脚本改成 `0755`），不改动 `app.tgz`，因此 `manifest.checksum` 仍然有效。构建后用 `tar -tzf` 检查顶层结构：`app.tgz`、`manifest`、`cmd/`、`config/`、`wizard/`、两个图标。
@@ -88,7 +107,7 @@ anirss/
 | POST | `/api/subs/:id/meta` | 刷新追番的封面/番组信息 |
 | POST | `/api/resolve` | 从追番地址解析名称 / 番组信息，不落库 |
 | POST | `/api/guess-episode` | 从文件名/种子名猜集数（最多 50 行） |
-| GET | `/api/search` | 在站点搜索番剧与发布组（`q`、`baseId`、`limit`） |
+| GET | `/api/search` | 在站点搜索番剧与发布组（`q`、`baseId`、`limit`、`phase=core\|full`）；`core` 先返回番剧/发布组/主页大小，`full` 再补字幕组 RSS 的精确体积 |
 | GET | `/api/image` | 同源代理搜索结果封面（仅允许配置站点与 Mikan/bgm 域名） |
 | GET/POST | `/api/extras` | 补番记录列表 / 新增磁力链接 |
 | POST | `/api/extras/upload` | 新增种子文件（base64） |
