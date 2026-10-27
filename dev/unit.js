@@ -7,7 +7,10 @@ const os = require('os');
 const path = require('path');
 const { parseFeed, decodeEntities } = require('../app/server/rss');
 const { parseTorrentInfo, magnetInfoHash } = require('../app/server/bencode');
-const { deriveHomeUrl, parseMikanHome, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes, cleanFeedTitle } = require('../app/server/meta');
+const {
+  deriveHomeUrl, parseMikanHome, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes, cleanFeedTitle,
+  parseSizeText, classifySizeItem, sizeStats,
+} = require('../app/server/meta');
 const { normalizeProxy, isNoProxy } = require('../app/server/proxy');
 const { extractArchive, archiveKind } = require('../app/server/archive');
 const { buildZip } = require('./zip-builder');
@@ -287,6 +290,62 @@ test('番组主页：按字幕组统计真实集数', () => {
   assert.strictEqual(home.subgroups.length, 2);
   assert.strictEqual(home.subgroups[0].episodeCount, 3);
   assert.strictEqual(home.subgroups[0].name, '猎户发布组');
+});
+
+test('体积文本解析与单集/合集分类', () => {
+  assert.strictEqual(parseSizeText('48.5 GB'), Math.round(48.5 * 1024 ** 3));
+  assert.strictEqual(parseSizeText('[466.82 MB]'), Math.round(466.82 * 1024 ** 2));
+  assert.strictEqual(parseSizeText('1,024 MB'), 1024 * 1024 ** 2);
+  assert.strictEqual(parseSizeText('1024 B'), 1024);
+  assert.strictEqual(parseSizeText('1080p HEVC-10bit'), 0);
+  assert.strictEqual(parseSizeText(''), 0);
+  assert.strictEqual(classifySizeItem('[Sub] 某番剧 [01-12][合集][1080p]').kind, 'batch');
+  assert.strictEqual(classifySizeItem('[Sub] 某番剧 - 03 [1080p]').kind, 'single');
+  assert.strictEqual(classifySizeItem('[Sub] 某番剧 NCOP [1080p]').kind, 'special');
+  assert.strictEqual(classifySizeItem('[Sub] 某番剧 全集 [BDRip]').kind, 'batch');
+  const stats = sizeStats([
+    { size: 300, kind: 'single' },
+    { size: 320, kind: 'single' },
+    { size: 9999, kind: 'batch', label: '第 1–12 集' },
+    { size: 400, kind: 'special' },
+    { size: 0, kind: 'single' },
+  ]);
+  assert.deepStrictEqual(stats, {
+    sizeMin: 300, sizeMax: 320, sizeCount: 2, batchSize: 9999, batchLabel: '第 1–12 集', batchCount: 1,
+  });
+});
+
+test('番组主页：字幕组单集体积范围与合集合计', () => {
+  const row = (t, size) => `<tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'a'.repeat(40)}">${t}</a></td><td>${size}</td></tr>`;
+  const html = `
+    <div class="subgroup-text" id="597"><a href="/Home/PublishGroup/373">猎户发布组</a>
+      <a href="/RSS/Bangumi?bangumiId=3735&subgroupid=597" class="mikan-rss">RSS</a></div>
+    <div class="episode-table">
+      ${row('[猎户] 某番剧 [12] [1080p]', '520.5 MB')}
+      ${row('[猎户] 某番剧 [11] [1080p]', '530 MB')}
+      ${row('[猎户] 某番剧 [10] [1080p]', '540.25 MB')}
+    </div>
+    <div class="subgroup-text" id="370"><a href="/Home/PublishGroup/12">LoliHouse</a>
+      <a href="/RSS/Bangumi?bangumiId=3735&subgroupid=370" class="mikan-rss">RSS</a></div>
+    <div class="episode-table">
+      ${row('[LoliHouse] 某番剧 - 01 [WebRip]', '300 MB')}
+      ${row('[LoliHouse] 某番剧 - 02 [WebRip]', '310 MB')}
+      ${row('[LoliHouse] 某番剧 [01-12][合集] [BDRip]', '6.02 GB')}
+    </div>`;
+  const home = parseMikanHome(html, 'https://mikanani.me/Home/Bangumi/3735');
+  const a = home.subgroups.find((s) => s.id === '597');
+  const b = home.subgroups.find((s) => s.id === '370');
+  assert.strictEqual(a.sizeCount, 3);
+  assert.strictEqual(a.sizeMin, Math.round(520.5 * 1024 ** 2));
+  assert.strictEqual(a.sizeMax, Math.round(540.25 * 1024 ** 2));
+  assert.strictEqual(a.batchSize, 0);
+  assert.strictEqual(b.sizeCount, 2);
+  assert.strictEqual(b.sizeMin, 300 * 1024 ** 2);
+  assert.strictEqual(b.sizeMax, 310 * 1024 ** 2);
+  assert.strictEqual(b.batchSize, Math.round(6.02 * 1024 ** 3));
+  assert.strictEqual(b.batchLabel, '第 1–12 集');
+  assert.strictEqual(b.episodeCount, 12);
+  assert.strictEqual(b.batch, true);
 });
 
 test('硬链接：正片/字幕识别与规划', () => {

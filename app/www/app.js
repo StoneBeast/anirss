@@ -2130,6 +2130,24 @@
    * 搜索番剧（站点搜索 → 选发布组 → 预填追番）
    * ============================================================ */
 
+  /** 单集体积范围；只有一个样本或差异很小时只显示一个值 */
+  function sizeRangeText(min, max) {
+    const lo = Number(min) || 0;
+    const hi = Number(max) || 0;
+    if (!lo || !hi) return '';
+    if (hi <= lo || hi - lo <= Math.max(1024 * 1024, hi * 0.01)) return fmtBytes(hi);
+    return `${fmtBytes(lo)}–${fmtBytes(hi)}`;
+  }
+
+  /** 字幕组发布的体积说明：单集范围，有合集时补上合集合计大小 */
+  function subgroupSizeText(s) {
+    const parts = [];
+    const single = sizeRangeText(s.sizeMin, s.sizeMax);
+    if (single) parts.push(`单集 ${single}`);
+    if (s.batchSize) parts.push(`合集 ${fmtBytes(s.batchSize)}`);
+    return parts.join(' · ');
+  }
+
   function searchResultsHTML() {
     if (S.searchLoading) {
       return `<div class="qb-empty"><span class="spinner" style="display:inline-block;vertical-align:-2px"></span> 正在搜索站点…</div>`;
@@ -2159,23 +2177,33 @@
               </div>
               <div class="search-sub small faint">${esc(g.homeUrl || '')}</div>
               <div class="subgroup-list">
-                ${g.subgroups.map((s) => `
-                  <button class="subgroup-chip ${s.matched ? 'hit' : ''}" type="button"
+                ${g.subgroups.map((s) => {
+                  const sizeLine = subgroupSizeText(s);
+                  const singleRange = sizeRangeText(s.sizeMin, s.sizeMax);
+                  const tooltip = [
+                    s.episodeText ? `收录：第 ${s.episodeText} 集` : '',
+                    s.matched ? `本次搜索匹配 ${s.matched} 条` : '',
+                    s.countSource === 'rss' ? '集数按字幕组 RSS 统计' : (s.countSource ? '集数按番组主页统计' : ''),
+                    s.batch ? '含合集' : '',
+                    singleRange ? `单集 ${singleRange}` : '',
+                    s.batchSize ? `合集 ${fmtBytes(s.batchSize)}${s.batchLabel && s.batchLabel !== '合集' ? `（${s.batchLabel}）` : ''}` : '',
+                    s.sampleTitle || s.rssUrl || '',
+                  ].filter(Boolean).join(' · ');
+                  return `
+                  <button class="subgroup-chip ${s.matched ? 'hit' : ''}${sizeLine ? ' has-size' : ''}" type="button"
                     data-action="pick-subgroup"
                     data-base="${esc(r.baseId)}"
                     data-bangumi="${esc(g.bangumiId)}"
                     data-subgroup="${esc(s.id)}"
                     data-title="${esc(g.title || '')}"
-                    title="${esc([
-                      s.episodeText ? `收录：第 ${s.episodeText} 集` : '',
-                      s.matched ? `本次搜索匹配 ${s.matched} 条` : '',
-                      s.countSource === 'rss' ? '集数按字幕组 RSS 统计' : (s.countSource ? '集数按番组主页统计' : ''),
-                      s.batch ? '含合集' : '',
-                      s.sampleTitle || s.rssUrl || '',
-                    ].filter(Boolean).join(' · '))}">
-                    <strong>${esc(s.name)}</strong>
-                    <span>${s.episodeCount ? `全 ${s.episodeCount} 集` : (s.matched ? `匹配 ${s.matched} 条` : '全部')}</span>
-                  </button>`).join('')}
+                    title="${esc(tooltip)}">
+                    <span class="subgroup-head">
+                      <strong>${esc(s.name)}</strong>
+                      <span>${s.episodeCount ? `全 ${s.episodeCount} 集` : (s.matched ? `匹配 ${s.matched} 条` : '全部')}</span>
+                    </span>
+                    ${sizeLine ? `<span class="subgroup-size">${esc(sizeLine)}</span>` : ''}
+                  </button>`;
+                }).join('')}
               </div>
             </div>
           </article>`).join('')}

@@ -186,22 +186,47 @@ function rssXml() {
 const SEARCH_EPISODES = [
   { hash: 'a'.repeat(40), subgroup: '203', title: '【字幕组A】FX战士久留美 - 01 [1080p]' },
   { hash: 'b'.repeat(40), subgroup: '71', title: '【字幕组B】FX战士久留美 - 02 [1080p]' },
+  { hash: 'c'.repeat(40), subgroup: '900', title: '【字幕组C】FX战士久留美 - 03 [1080p]' },
 ];
 
+// 搜索用字幕组：A 逐集 300–302MB；B 逐集 410–411MB；C 只有一份 01-12 合集 9.8GB
+const SUBGROUPS = {
+  203: { label: 'A', count: 3, baseMB: 300 },
+  71: { label: 'B', count: 2, baseMB: 410 },
+};
+
 function subgroupXml(count, subgroupId) {
+  const label = SUBGROUPS[subgroupId].label;
+  const baseMB = SUBGROUPS[subgroupId].baseMB;
   const items = Array.from({ length: count }, (_, i) => `
     <item>
-      <title><![CDATA[【字幕组${subgroupId === '203' ? 'A' : 'B'}】FX战士久留美 [${String(i + 1).padStart(2, '0')}] [1080p]]]></title>
+      <title><![CDATA[【字幕组${label}】FX战士久留美 [${String(i + 1).padStart(2, '0')}] [1080p]]]></title>
       <link>http://127.0.0.1:${RSS_PORT}/Home/Episode/${String(i + 1).padStart(40, 'a')}</link>
       <guid isPermaLink="false">sg-${subgroupId}-${i + 1}</guid>
       <pubDate>${new Date().toUTCString()}</pubDate>
-      <enclosure url="http://127.0.0.1:${RSS_PORT}/t/${i + 1}.torrent" length="123456" type="application/x-bittorrent" />
+      <enclosure url="http://127.0.0.1:${RSS_PORT}/t/${i + 1}.torrent" length="${(baseMB + i) * 1024 * 1024}" type="application/x-bittorrent" />
     </item>`).join('');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
   <title>Mikan Project - 字幕组${subgroupId}</title>
   <link>http://127.0.0.1:${RSS_PORT}/</link>
   ${items}
+</channel></rss>`;
+}
+
+function batchSubgroupXml(subgroupId) {
+  const size = Math.round(9.8 * 1024 * 1024 * 1024);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>Mikan Project - 字幕组C</title>
+  <link>http://127.0.0.1:${RSS_PORT}/</link>
+  <item>
+    <title><![CDATA[【字幕组C】FX战士久留美 [01-12][合集] [1080p]]]></title>
+    <link>http://127.0.0.1:${RSS_PORT}/Home/Episode/${'c'.repeat(40)}</link>
+    <guid isPermaLink="false">sg-${subgroupId}-batch</guid>
+    <pubDate>${new Date().toUTCString()}</pubDate>
+    <enclosure url="http://127.0.0.1:${RSS_PORT}/t/batch.torrent" length="${size}" type="application/x-bittorrent" />
+  </item>
 </channel></rss>`;
 }
 
@@ -228,6 +253,7 @@ async function startRssMock() {
       const sg = u.searchParams.get('subgroupid');
       if (sg === '203') return text(res, subgroupXml(3, sg), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
       if (sg === '71') return text(res, subgroupXml(2, sg), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
+      if (sg === '900') return text(res, batchSubgroupXml(sg), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
       rssHits++;
       return text(res, rssXml(), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
     }
@@ -253,15 +279,20 @@ async function startRssMock() {
         <div class="subgroup-text" id="203"><a href="/Home/PublishGroup/70">字幕组A</a>
           <a href="/RSS/Bangumi?bangumiId=4059&subgroupid=203" class="mikan-rss">RSS</a></div>
         <div class="episode-table">
-          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'1'.repeat(40)}">【字幕组A】FX战士久留美 [01] [1080p]</a></td></tr>
-          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'2'.repeat(40)}">【字幕组A】FX战士久留美 [02] [1080p]</a></td></tr>
-          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'3'.repeat(40)}">【字幕组A】FX战士久留美 [03] [1080p]</a></td></tr>
+          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'1'.repeat(40)}">【字幕组A】FX战士久留美 [01] [1080p]</a></td><td>300 MB</td></tr>
+          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'2'.repeat(40)}">【字幕组A】FX战士久留美 [02] [1080p]</a></td><td>301 MB</td></tr>
+          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'3'.repeat(40)}">【字幕组A】FX战士久留美 [03] [1080p]</a></td><td>302 MB</td></tr>
         </div>
         <div class="subgroup-text" id="71"><a href="/Home/PublishGroup/70">字幕组B</a>
           <a href="/RSS/Bangumi?bangumiId=4059&subgroupid=71" class="mikan-rss">RSS</a></div>
         <div class="episode-table">
-          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'4'.repeat(40)}">【字幕组B】FX战士久留美 - 01 [1080p]</a></td></tr>
-          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'5'.repeat(40)}">【字幕组B】FX战士久留美 - 02 [1080p]</a></td></tr>
+          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'4'.repeat(40)}">【字幕组B】FX战士久留美 - 01 [1080p]</a></td><td>410 MB</td></tr>
+          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'5'.repeat(40)}">【字幕组B】FX战士久留美 - 02 [1080p]</a></td><td>411 MB</td></tr>
+        </div>
+        <div class="subgroup-text" id="900"><a href="/Home/PublishGroup/90">字幕组C</a>
+          <a href="/RSS/Bangumi?bangumiId=4059&subgroupid=900" class="mikan-rss">RSS</a></div>
+        <div class="episode-table">
+          <tr><td><input type="checkbox" class="js-episode-select" /></td><td><a class="magnet-link-wrap" href="/Home/Episode/${'c'.repeat(40)}">【字幕组C】FX战士久留美 [01-12][合集] [1080p]</a></td><td>9.8 GB</td></tr>
         </div>
       </body></html>`, 200, { 'Content-Type': 'text/html; charset=utf-8' });
     }
@@ -688,13 +719,27 @@ async function main() {
     assert.ok(hit.title.includes('FX战士久留美'), hit.title);
     const groupNames = hit.subgroups.map((s) => s.name);
     assert.ok(groupNames.includes('字幕组A') && groupNames.includes('字幕组B'), JSON.stringify(groupNames));
+    assert.ok(groupNames.includes('字幕组C'), JSON.stringify(groupNames));
     const hitSub = hit.subgroups.find((s) => s.id === '203');
     assert.ok(hitSub && hitSub.matched >= 1 && hitSub.rssUrl.includes('subgroupid=203'), JSON.stringify(hitSub));
     assert.strictEqual(hitSub.episodeCount, 3, '应按番组主页统计真实集数，而不是搜索样本数');
     assert.strictEqual(hitSub.episodeText, '1-3', hitSub.episodeText);
+    // 单集体积范围取自字幕组 RSS 的 enclosure 长度（300 / 301 / 302 MB）
+    assert.strictEqual(hitSub.sizeCount, 3, JSON.stringify(hitSub));
+    assert.strictEqual(hitSub.sizeMin, 300 * 1024 * 1024);
+    assert.strictEqual(hitSub.sizeMax, 302 * 1024 * 1024);
+    assert.strictEqual(hitSub.batchSize, 0, JSON.stringify(hitSub));
     const hitSubB = hit.subgroups.find((s) => s.id === '71');
     assert.strictEqual(hitSubB.episodeCount, 2, JSON.stringify(hitSubB));
-    console.log('✓ 站点搜索：番剧 + 发布组 + 真实集数');
+    assert.strictEqual(hitSubB.sizeMin, 410 * 1024 * 1024);
+    assert.strictEqual(hitSubB.sizeMax, 411 * 1024 * 1024);
+    // 只有一份 01-12 合集的字幕组：没有单集范围，显示合集合计大小
+    const hitSubC = hit.subgroups.find((s) => s.id === '900');
+    assert.strictEqual(hitSubC.episodeCount, 12, JSON.stringify(hitSubC));
+    assert.strictEqual(hitSubC.sizeCount, 0, JSON.stringify(hitSubC));
+    assert.strictEqual(hitSubC.batchSize, Math.round(9.8 * 1024 * 1024 * 1024));
+    assert.strictEqual(hitSubC.batchLabel, '第 1–12 集');
+    console.log('✓ 站点搜索：番剧 + 发布组 + 真实集数 + 体积范围/合集合计');
 
     // 集数识别工具
     const guessed = await api('/api/guess-episode', {

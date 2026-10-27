@@ -34,6 +34,7 @@ const { parseTorrentInfo, magnetInfoHash } = require('./bencode');
 const { setProxy, publicProxy: proxyPublic, normalizeProxy, proxyLabel } = require('./proxy');
 const {
   fetchSubMeta, deriveHomeUrl, cleanFeedTitle, parseMikanHome, parseEpisodePage, homeUrlFor, rssUrlFor,
+  classifySizeItem, sizeStats, parseSizeText,
 } = require('./meta');
 
 const MAX_PREVIEW_ITEMS = 150;
@@ -53,6 +54,18 @@ function sanitizeShareName(name) {
     .replace(/^[.\s]+|[.\s]+$/g, '')
     .trim()
     .slice(0, 120);
+}
+
+/** 搜索结果里字幕组的体积字段（单集范围 + 合集合计） */
+function sizeFields(src) {
+  return {
+    sizeMin: Number(src && src.sizeMin) || 0,
+    sizeMax: Number(src && src.sizeMax) || 0,
+    sizeCount: Number(src && src.sizeCount) || 0,
+    batchSize: Number(src && src.batchSize) || 0,
+    batchLabel: String((src && src.batchLabel) || '').slice(0, 40),
+    batchCount: Number(src && src.batchCount) || 0,
+  };
 }
 
 class Engine {
@@ -1435,9 +1448,16 @@ class Engine {
     const url = rssUrlFor(baseUrl, bangumiId, subgroupId);
     const feed = await fetchFeed(url, { timeout: 20000, proxy: this.data.proxy });
     const episodes = new Set();
+    const sizeEntries = [];
     let specials = 0;
     for (const it of feed.items || []) {
-      const guess = guessEpisode(it.title);
+      const info = classifySizeItem(it.title);
+      const guess = info.guess;
+      sizeEntries.push({
+        size: Number(it.size) || parseSizeText(it.description),
+        kind: info.kind,
+        label: info.label,
+      });
       if (!guess) continue;
       if (guess.kind === 'range') {
         for (let n = guess.from; n <= guess.to && n - guess.from < 500; n++) episodes.add(n);
@@ -1455,6 +1475,7 @@ class Engine {
       count: episodes.size || (feed.items || []).length,
       specials,
       title: feed.title || '',
+      ...sizeStats(sizeEntries),
     };
     this.subgroupCache.set(key, { at: nowMs(), data });
     if (this.subgroupCache.size > 200) this.subgroupCache.delete(this.subgroupCache.keys().next().value);
@@ -1563,6 +1584,7 @@ class Engine {
           batch: !!(full && full.batch),
           specials: full ? full.specials : 0,
           exact: !!full,
+          ...sizeFields(full),
           rssUrl: rssUrlFor(base.url, g.bangumiId, s.id),
         });
       }
@@ -1578,6 +1600,7 @@ class Engine {
           batch: !!s.batch,
           specials: s.specials || 0,
           exact: true,
+          ...sizeFields(s),
           rssUrl: rssUrlFor(base.url, g.bangumiId, s.id),
         });
       }
@@ -1600,6 +1623,18 @@ class Engine {
             }
             s.rssItems = rss.items;
             s.specials = Math.max(s.specials || 0, rss.specials || 0);
+            // RSS 里的 enclosure 长度就是整份种子的内容大小，比主页取整后的文本更准
+            if (rss.sizeCount > 0 && rss.sizeCount >= (s.sizeCount || 0)) {
+              s.sizeMin = rss.sizeMin;
+              s.sizeMax = rss.sizeMax;
+              s.sizeCount = rss.sizeCount;
+            }
+            if (rss.batchSize > 0 && rss.batchSize >= (s.batchSize || 0)) {
+              s.batchSize = rss.batchSize;
+              s.batchLabel = rss.batchLabel;
+              s.batchCount = rss.batchCount;
+              s.batch = true;
+            }
           } catch {
             s.countSource = s.countSource || 'home';
           }

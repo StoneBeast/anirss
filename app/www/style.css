@@ -2040,6 +2040,17 @@ html[data-theme="light"] .field-hint.bad { color: #b52d43; }
 }
 .subgroup-chip strong { font-weight: 620; color: var(--text); }
 .subgroup-chip span { color: var(--faint); font-size: 10.5px; }
+.subgroup-chip .subgroup-head { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11.5px; }
+.subgroup-chip .subgroup-head > span { color: var(--faint); font-size: 10.5px; }
+.subgroup-chip .subgroup-size { color: var(--faint); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.subgroup-chip.has-size {
+  height: auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 11px;
+  border-radius: 12px;
+}
 .subgroup-chip:hover { border-color: rgba(56, 182, 255, 0.45); background: rgba(56, 182, 255, 0.1); color: var(--text); }
 .subgroup-chip.hit { border-color: rgba(56, 182, 255, 0.28); background: rgba(56, 182, 255, 0.07); }
 

@@ -83,6 +83,63 @@ function homeUrlFor(baseUrl, bangumiId) {
   }
 }
 
+const SIZE_POWERS = { '': 0, K: 1, M: 2, G: 3, T: 4, P: 5 };
+const BATCH_TITLE_RE = /(?:合集|全集|全\s*\d+\s*[集话話]|BDBOX|BD\s*BOX|Blu-?ray\s*BOX|COMPLETE\s*BOX)/i;
+
+/** 把「48.5 GB」「466.82 MB」这类人类可读大小换算成字节；无法识别返回 0 */
+function parseSizeText(input) {
+  const m = /(\d+(?:[.,]\d+)*)\s*([KMGTP]?)i?B(?![A-Za-z])/i.exec(String(input == null ? '' : input));
+  if (!m) return 0;
+  const value = Number(String(m[1]).replace(/,/g, ''));
+  const power = SIZE_POWERS[String(m[2] || '').toUpperCase()];
+  if (!Number.isFinite(value) || value <= 0 || power === undefined) return 0;
+  return Math.round(value * Math.pow(1024, power));
+}
+
+/**
+ * 判断一条发布标题是单集、合集还是特别篇。
+ * 合集既包括「01-12」这种范围标题，也包括「合集 / 全集 / BDBOX」这类关键词。
+ */
+function classifySizeItem(title) {
+  const text = String(title == null ? '' : title);
+  const guess = guessEpisode(text);
+  if (guess && guess.kind === 'range') return { kind: 'batch', label: guess.label, guess };
+  if (guess && guess.kind === 'single') return { kind: 'single', label: guess.label, guess };
+  if (guess && guess.kind === 'special') return { kind: 'special', label: guess.label, guess };
+  if (BATCH_TITLE_RE.test(text)) return { kind: 'batch', label: '合集', guess: guess || null };
+  return { kind: 'unknown', label: '', guess: guess || null };
+}
+
+/**
+ * 汇总一组条目的体积：单集取最小/最大，合集取最大的一份作为「合计大小」。
+ * entries: [{ size, kind, label }]
+ */
+function sizeStats(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  let sizeMin = 0;
+  let sizeMax = 0;
+  let sizeCount = 0;
+  let batchSize = 0;
+  let batchLabel = '';
+  let batchCount = 0;
+  for (const item of list) {
+    const size = Number(item && item.size) || 0;
+    if (size <= 0) continue;
+    if (item.kind === 'single') {
+      if (!sizeCount || size < sizeMin) sizeMin = size;
+      if (size > sizeMax) sizeMax = size;
+      sizeCount++;
+    } else if (item.kind === 'batch') {
+      batchCount++;
+      if (size > batchSize) {
+        batchSize = size;
+        batchLabel = item.label || '';
+      }
+    }
+  }
+  return { sizeMin, sizeMax, sizeCount, batchSize, batchLabel, batchCount };
+}
+
 /** 解析番组主页的「字幕组列表」：id -> 名称 */
 function parseSubgroups(html, homeUrl, bangumiId) {
   const text = String(html || '');
@@ -118,30 +175,47 @@ function parseSubgroupEpisodes(html) {
   for (let i = 0; i < marks.length; i++) {
     const end = i + 1 < marks.length ? marks[i + 1].idx : text.length;
     const seg = text.slice(marks[i].idx, end);
-    const titles = [...seg.matchAll(/<a\b[^>]*\bmagnet-link-wrap\b[^>]*>([\s\S]*?)<\/a>/g)]
-      .map((x) => cleanText(x[1]));
-    const rows = (seg.match(/js-episode-select/g) || []).length;
+    // 按表格行取标题与大小列：<td><input class="js-episode-select" ...></td>
+    // <td><a class="magnet-link-wrap">标题</a></td><td>48.5 GB</td>...
+    const rows = [];
+    const rowRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+    let rm;
+    while ((rm = rowRe.exec(seg))) {
+      const body = rm[1];
+      if (!/js-episode-select/i.test(body)) continue;
+      const link = /<a\b[^>]*\bmagnet-link-wrap\b[^>]*>([\s\S]*?)<\/a>/i.exec(body);
+      const sizeCell = /<td\b[^>]*>\s*([\d.,]+\s*[KMGTP]?i?B)\s*<\/td>/i.exec(body);
+      rows.push({
+        title: link ? cleanText(link[1]) : '',
+        size: sizeCell ? parseSizeText(sizeCell[1]) : 0,
+      });
+    }
     const episodes = new Set();
+    const entries = [];
     let batch = false;
     let specials = 0;
-    for (const title of titles) {
-      const guess = guessEpisode(title);
-      if (!guess) continue;
-      if (guess.kind === 'range') {
+    for (const row of rows) {
+      const info = classifySizeItem(row.title);
+      const guess = info.guess;
+      entries.push({ size: row.size, kind: info.kind, label: info.label });
+      if (info.kind === 'batch') {
         batch = true;
-        for (let n = guess.from; n <= guess.to && n - guess.from < 500; n++) episodes.add(n);
-      } else if (guess.kind === 'single' && guess.episode) {
-        episodes.add(guess.episode);
-      } else {
+        if (guess && guess.kind === 'range') {
+          for (let n = guess.from; n <= guess.to && n - guess.from < 500; n++) episodes.add(n);
+        }
+      } else if (info.kind === 'single') {
+        if (guess && guess.episode) episodes.add(guess.episode);
+      } else if (info.kind === 'special') {
         specials++;
       }
     }
     map.set(marks[i].id, {
-      rows,
-      titles: titles.length,
+      rows: rows.length,
+      titles: rows.filter((r) => r.title).length,
       episodes: Array.from(episodes).sort((a, b) => a - b),
       batch,
       specials,
+      ...sizeStats(entries),
     });
   }
   return map;
@@ -195,13 +269,20 @@ function parseMikanHome(html, homeUrl) {
   meta.subgroups = parseSubgroups(text, homeUrl, meta.bangumiId).map((s) => {
     const info = episodeMap.get(String(s.id)) || null;
     // 同一集可能有多个版本（简/繁、不同分辨率），优先用识别出的不同集数
-    const count = info ? (info.episodes.length || info.rows) : 0;    return {
+    const count = info ? (info.episodes.length || info.rows) : 0;
+    return {
       ...s,
       episodeCount: count,
       episodeRows: info ? info.rows : 0,
       episodes: info ? info.episodes.slice(0, 240) : [],
       batch: !!(info && info.batch),
       specials: info ? info.specials : 0,
+      sizeMin: info ? info.sizeMin || 0 : 0,
+      sizeMax: info ? info.sizeMax || 0 : 0,
+      sizeCount: info ? info.sizeCount || 0 : 0,
+      batchSize: info ? info.batchSize || 0 : 0,
+      batchLabel: info ? info.batchLabel || '' : '',
+      batchCount: info ? info.batchCount || 0 : 0,
     };
   });
   return meta;
@@ -257,5 +338,6 @@ async function fetchSubMeta(subUrl, opts) {
 
 module.exports = {
   deriveHomeUrl, parseMikanHome, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes,
+  parseSizeText, classifySizeItem, sizeStats,
   fetchSubMeta, cleanText, cleanFeedTitle, rssUrlFor, homeUrlFor,
 };

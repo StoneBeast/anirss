@@ -195,13 +195,19 @@ function rssXml(title, items) {
 </rss>`;
 }
 
-function subgroupRows(count, label) {
+function subgroupRows(count, label, baseMB, batch) {
   let out = '';
   for (let i = 1; i <= count; i++) {
     const ep = String(i).padStart(2, '0');
     out += `<tr><td><input type="checkbox" class="js-episode-select" /></td>`
       + `<td><a class="magnet-link-wrap" href="/Home/Episode/${String(i).padStart(40, 'a')}">`
-      + `【${label}】药屋少女的呢喃 [${ep}] [1080p]</a></td></tr>`;
+      + `【${label}】药屋少女的呢喃 [${ep}] [1080p]</a></td>`
+      + `<td>${(baseMB || 780) + i * 2} MB</td></tr>`;
+  }
+  if (batch) {
+    out += `<tr><td><input type="checkbox" class="js-episode-select" /></td>`
+      + `<td><a class="magnet-link-wrap" href="/Home/Episode/${'b'.repeat(40)}">`
+      + `【${label}】药屋少女的呢喃 [01-12][合集] [1080p]</a></td><td>9.8 GB</td></tr>`;
   }
   return out;
 }
@@ -228,19 +234,28 @@ async function startRss() {
     }
     if (u.pathname === '/RSS/Bangumi') {
       const sg = u.searchParams.get('subgroupid');
-      const counts = { 203: [12, '桜都字幕组'], 71: [8, 'TSDM字幕组'], 1236: [6, '绿茶字幕组'] };
+      // [集数, 名称, 单集基准体积(MB)]；203 额外带一份 01-12 合集
+      const counts = { 203: [12, '桜都字幕组', 780], 71: [8, 'TSDM字幕组', 760], 1236: [6, '绿茶字幕组', 742] };
       if (sg && counts[sg]) {
-        const [n, label] = counts[sg];
+        const [n, label, baseMB] = counts[sg];
         const items = Array.from({ length: n }, (_, i) => `
           <item>
             <title><![CDATA[【${label}】药屋少女的呢喃 [${String(i + 1).padStart(2, '0')}] [1080p][简繁内封]]]></title>
             <link>http://127.0.0.1:${RSS_PORT}/Home/Episode/${String(i + 1).padStart(40, 'a')}</link>
             <guid isPermaLink="false">demo-sg-${sg}-${i + 1}</guid>
             <pubDate>${new Date(NOW - i * 3600_000).toUTCString()}</pubDate>
-            <enclosure url="http://127.0.0.1:${RSS_PORT}/torrents/demo-sg-${sg}-${i + 1}.torrent" length="${800_000_000 + i}" type="application/x-bittorrent" />
+            <enclosure url="http://127.0.0.1:${RSS_PORT}/torrents/demo-sg-${sg}-${i + 1}.torrent" length="${(baseMB + i * 2) * 1024 * 1024}" type="application/x-bittorrent" />
           </item>`).join('');
+        const batch = sg === '203' ? `
+          <item>
+            <title><![CDATA[【${label}】药屋少女的呢喃 [01-12][合集] [1080p][简繁内封]]]></title>
+            <link>http://127.0.0.1:${RSS_PORT}/Home/Episode/${'b'.repeat(40)}</link>
+            <guid isPermaLink="false">demo-sg-${sg}-batch</guid>
+            <pubDate>${new Date(NOW - 2 * 86400_000).toUTCString()}</pubDate>
+            <enclosure url="http://127.0.0.1:${RSS_PORT}/torrents/demo-sg-${sg}-batch.torrent" length="${Math.round(9.8 * 1024 ** 3)}" type="application/x-bittorrent" />
+          </item>` : '';
         return text(res, `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
-          <title>Mikan Project - ${label}</title><link>http://127.0.0.1:${RSS_PORT}/</link>${items}
+          <title>Mikan Project - ${label}</title><link>http://127.0.0.1:${RSS_PORT}/</link>${items}${batch}
         </channel></rss>`, 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
       }
       return text(res, rssXml('Mikan Project - 药屋少女的呢喃', KUSURIYA_ITEMS), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
@@ -283,13 +298,13 @@ async function startRss() {
         <p class="bangumi-info">Bangumi番组计划链接：<br /><a href="https://bgm.tv/subject/382179">https://bgm.tv/subject/382179</a></p>
         <div class="subgroup-text" id="203"><a href="/Home/PublishGroup/12">桜都字幕组</a>
           <a href="/RSS/Bangumi?bangumiId=4059&subgroupid=203" class="mikan-rss">RSS</a></div>
-        <div class="episode-table">${subgroupRows(12, '桜都字幕组')}</div>
+        <div class="episode-table">${subgroupRows(12, '桜都字幕组', 780, true)}</div>
         <div class="subgroup-text" id="71"><a href="/Home/PublishGroup/70">TSDM字幕组</a>
           <a href="/RSS/Bangumi?bangumiId=4059&subgroupid=71" class="mikan-rss">RSS</a></div>
-        <div class="episode-table">${subgroupRows(8, 'TSDM字幕组')}</div>
+        <div class="episode-table">${subgroupRows(8, 'TSDM字幕组', 760)}</div>
         <div class="subgroup-text" id="1236"><a href="/Home/PublishGroup/88">绿茶字幕组</a>
           <a href="/RSS/Bangumi?bangumiId=4059&subgroupid=1236" class="mikan-rss">RSS</a></div>
-        <div class="episode-table">${subgroupRows(6, '绿茶字幕组')}</div>
+        <div class="episode-table">${subgroupRows(6, '绿茶字幕组', 742)}</div>
       </body></html>`, 200, { 'Content-Type': 'text/html; charset=utf-8' });
     }
     if (u.pathname === '/cover/frieren.svg') {
