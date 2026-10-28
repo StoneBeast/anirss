@@ -56,6 +56,18 @@ bash start.sh
 | `ANIRSS_DATA` | `./data` | 配置与历史数据目录 |
 | `ANIRSS_SOCKET` | 空 | Unix Socket 路径（fnOS 网关用） |
 
+### 方式三：Docker
+
+```bash
+git clone https://github.com/StoneBeast/anirss.git && cd anirss
+docker build -t anirss:local .
+docker run -d --name anirss -p 8777:8777 -v "$PWD/data:/data" anirss:local
+```
+
+然后打开 <http://127.0.0.1:8777>。也可以直接用仓库内的 `docker-compose.yml`（`docker compose up -d --build`）。
+
+`/data` 存配置与历史；需要「补番硬链接 / 字幕入库」时，把 qBittorrent 的下载目录和硬链接目标目录**按宿主机相同路径**挂进容器（两者还必须在同一文件系统，硬链接不能跨分区），细节见 [docs/DOCKER.md](docs/DOCKER.md)。
+
 ## 用法
 
 **1. 连接 qBittorrent** — 「连接设置」填 WebUI 地址（同机一般是 `http://127.0.0.1:8080`），点「保存并测试」。成功后可以一键把 qB 的默认保存路径加为路径预设。

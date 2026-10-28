@@ -1,0 +1,22 @@
+# 构建上下文瘦身：镜像只需要 app/ 与 package.json
+.git
+.gitignore
+.gitattributes
+dev
+docs
+wizard
+cmd
+config
+data
+node_modules
+*.fpk
+*.png
+*.PNG
+start.cmd
+start.sh
+manifest
+README.md
+LICENSE
+Dockerfile
+.dockerignore
+docker-compose.yml
