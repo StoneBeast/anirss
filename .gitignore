@@ -13,3 +13,7 @@ work/
 tmp/
 .DS_Store
 Thumbs.db
+
+# Python 缓存（dev/ 下的脚本会生成）
+__pycache__/
+*.pyc

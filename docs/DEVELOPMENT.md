@@ -17,6 +17,7 @@ node dev/perf-check.js  # 性能行为验证：静态资源与 /api/state 的 gz
 node dev/ui-actions.js  # 浏览器交互测试（75 项）：需要 Chrome CDP 9222 + 演示实例 8777
 node dev/ui-subs-check.js # 字幕弹窗抽查：弹窗打开、zip 上传入库、列表刷新（同上前提）
 node dev/ui-patch-check.js # keyed patch 抽查：软刷新后列表节点复用、滚动不跳（同上前提）
+node dev/ui-modal-check.js # 弹窗误触抽查：点表单旁边/拖选松手到外面不会把表单关掉（同上前提，可用 ANIRSS_APP 指向别的实例）
 node dev/ui-shot.js     # 重新生成 docs/ 下的截图
 node dev/ui-empty.js    # 空数据首启引导截图
 ```

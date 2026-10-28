@@ -103,6 +103,9 @@
     viewDirty: false,
     drafts: {},
     modalDirty: false,
+    // 遮罩点击保护：弹窗里的表单只要被改过，就不再响应「点旁边关掉」
+    modalEdited: false,
+    modalOpenedAt: 0,
     subModalDraft: null,
   };
 
@@ -3422,6 +3425,8 @@
     const root = $('#modal-root');
     if (!root) return;
     S.modal = { type: type || 'modal' };
+    S.modalEdited = false;
+    S.modalOpenedAt = Date.now();
     root.innerHTML = html;
     syncLock();
     setTimeout(() => {
@@ -3434,6 +3439,7 @@
     const root = $('#modal-root');
     if (root) root.innerHTML = '';
     S.modal = null;
+    S.modalEdited = false;
     S.subTemplate = null;
     S.modalDirty = false;
     // 关窗后不再关心进行中的搜索：停掉计时并把序号推高，回来的响应会被丢弃
@@ -3463,6 +3469,8 @@
   function askConfirm(opts) {
     return new Promise((resolve) => {
       S.confirmResolve = resolve;
+      S.modalEdited = false;
+      S.modalOpenedAt = Date.now();
       const root = $('#modal-root');
       if (!root) return resolve(false);
       root.innerHTML = `
@@ -3497,6 +3505,8 @@
   function askPrompt(opts) {
     return new Promise((resolve) => {
       S.confirmResolve = resolve;
+      S.modalEdited = false;
+      S.modalOpenedAt = Date.now();
       const root = $('#modal-root');
       if (!root) return resolve(false);
       root.innerHTML = `
@@ -4622,6 +4632,8 @@
       if (!t || !t.closest) return;
       if (t.closest('#view')) S.viewDirty = true;
       if (t.closest('#sub-form')) S.modalDirty = true;
+      // 弹窗里只要动过输入：点遮罩不再直接关掉，避免误触丢内容
+      if (t.closest('#modal-root')) S.modalEdited = true;
     }, true);
   });
 
@@ -4701,12 +4713,43 @@
     if (S.drawer) { closeDrawer(); return; }
   });
 
+  /* 点遮罩关闭弹窗的保护。
+     1) 只有「按下」和「抬起」都落在遮罩本身，才算一次点击遮罩：在表单里拖选文字
+        后松手到弹窗外时，click 会落到共同祖先（遮罩）上，以前会直接把表单关掉。
+     2) 落在遮罩右侧滚动条上的点击不算。
+     3) 刚打开的一小段时间内忽略，避免动画途中/连点误触。
+     4) 弹窗里的表单已经被改过时，不再响应点遮罩，只能用「取消」「×」或 Esc 关闭。 */
+  const BACKDROP_MIN_OPEN_MS = 250;
+  const backdropKind = (target) => (target && target.dataset ? target.dataset.backdrop || '' : '');
+  let pressKind = '';
+  let releaseKind = '';
+  document.addEventListener('mousedown', (e) => { pressKind = backdropKind(e.target); releaseKind = ''; }, true);
+  document.addEventListener('mouseup', (e) => { releaseKind = backdropKind(e.target); }, true);
+
   document.addEventListener('click', (e) => {
-    if (e.target.dataset && e.target.dataset.backdrop === 'modal') {
-      if (S.confirmResolve) resolveConfirm(false);
-      else closeModal();
+    const kind = backdropKind(e.target);
+    const pressed = pressKind;
+    const released = releaseKind;
+    pressKind = '';
+    releaseKind = '';
+    if (!kind) return;
+    // 起点或终点有一个不在遮罩上：拖选、拖拽、在表单里按下再甩到外面，都不关
+    if (pressed !== kind || released !== kind) return;
+    // 滚动条区域：clientWidth 不含滚动条，超出即点在滚动条上
+    const el = e.target;
+    if (el.clientWidth && e.clientX >= el.getBoundingClientRect().left + el.clientWidth) return;
+    // 打开后瞬时的点击（动画中、连点）忽略
+    if (Date.now() - S.modalOpenedAt < BACKDROP_MIN_OPEN_MS) return;
+    if (kind === 'modal') {
+      if (S.confirmResolve) { resolveConfirm(false); return; }
+      if (S.modalEdited) {
+        toast('表单已填写内容：请点「取消」或右上角 × 关闭', 'info');
+        return;
+      }
+      closeModal();
+      return;
     }
-    if (e.target.dataset && e.target.dataset.backdrop === 'drawer') closeDrawer();
+    if (kind === 'drawer') closeDrawer();
   });
 
   let clockEl = null;
