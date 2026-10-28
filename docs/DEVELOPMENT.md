@@ -121,6 +121,51 @@ python dev/pack-dev.py anirss.fpk anirss-dev.fpk --version 1.13.917
 
 > dev 包只用于本机测试，不要提交、不要发布。仓库 `manifest` 的版本号仍然只在 `release/x.y.z` 的 PR 里改。
 
+## 发版流程
+
+`main` 是受保护分支，只接受 PR；功能分支**一律不改版本号**。版本号跟着「发布」这个事件走，用一个短命的 `release/x.y.z` 分支承载：
+
+```bash
+# 1) 功能分支照常 PR 进 main（不带版本号）
+git switch -c feat/xxx && ... && git push -u origin feat/xxx   # → PR → main
+
+# 2) 发版：从最新的 main 切 release 分支
+git switch main && git pull
+git switch -c release/1.13.3
+```
+
+在 `release/1.13.3` 上做一个 `chore(release): 1.13.3` 提交，只有版本号和文案变化：
+
+| 文件 | 改什么 |
+| --- | --- |
+| `manifest` | `version`，并在 `changelog` 前面插入这一版的说明 |
+| `package.json` | `version` |
+| `app/server/util.js` | `APP_VERSION` |
+| `app/www/index.html` | 侧栏版本号 `v1.13.3` |
+| `README.md` | badge 版本、`anirss-1.13.3.fpk` 文件名 |
+| `docs/` 里的示例文件名与示例输出 | 同上 |
+
+```bash
+# 3) 发版 PR 回 main（内容就是一版版本号，几十行）
+git commit -am "chore(release): 1.13.3" && git push -u origin release/1.13.3
+```
+
+PR 合并后打 tag 并构建安装包：
+
+```bash
+git switch main && git pull
+git tag -a v1.13.3 -m "AniRSS 1.13.3" && git push origin v1.13.3
+fnpack.exe build -d <项目目录>
+python dev/repack-fpk.py anirss.fpk anirss-1.13.3.fpk
+```
+
+把 `anirss-1.13.3.fpk` 作为 Release 资产上传。**tag 指向 main 上那个已合并的发版提交**，这样「仓库里的版本号 = 某个 tag = 某个 fpk」三者一致，出问题能直接对回去。
+
+两条纪律：
+
+- 功能分支不要顺手改 `manifest`，否则发版 PR 会和功能 PR 冲突；
+- 发版 PR 只放版本号与 changelog，功能改动该在它自己的 PR 里结束。
+
 ### 发布注意
 
 > ⚠️ `manifest` 里**不要**再写 `disable_authorization_path = true`。这一行会隐藏 fnOS「应用设置 → 访问权限」，而补番硬链接需要用户在那里授权 qB 下载目录与目标目录（应用以独立用户 `anirss` 运行，未授权时读不到文件）。`config/resource` 的 `data-share` 保持为空即可，用户通过「访问权限 → 添加」自行授权任意目录。
