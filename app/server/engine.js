@@ -34,7 +34,7 @@ const { extractArchive, archiveKind, MAX_TOTAL_BYTES } = require('./archive');
 const { parseTorrentInfo, magnetInfoHash } = require('./bencode');
 const { setProxy, publicProxy: proxyPublic, normalizeProxy, proxyLabel } = require('./proxy');
 const {
-  fetchSubMeta, deriveHomeUrl, cleanFeedTitle, parseMikanHome, parseEpisodePage, homeUrlFor, rssUrlFor,
+  fetchSubMeta, deriveHomeUrl, cleanFeedTitle, parseMikanHome, parseMikanSearch, parseEpisodePage, homeUrlFor, rssUrlFor,
   classifySizeItem, sizeStats, parseSizeText,
 } = require('./meta');
 
@@ -156,6 +156,7 @@ class Engine {
     // 站点搜索：job 级缓存（core 与 full 共享抓取结果）+ 各类出站请求的 in-flight 去重
     this.searchJobs = new Map();
     this.searchFeedCache = new Map();
+    this.searchWorksCache = new Map();
     this.episodePending = new Map();
     this.homePending = new Map();
     this.subgroupPending = new Map();
@@ -1618,6 +1619,25 @@ class Engine {
     });
   }
 
+  /** 站点搜索页里的番剧列表。RSS/Search 只有「最近有更新」的条目，
+   *  早就完结的作品不会出现，所以搜索以这个页面补齐。 */
+  async fetchSearchWorks(baseUrl, q) {
+    const url = `${String(baseUrl).replace(/\/+$/, '')}/Home/Search?searchStr=${encodeURIComponent(q)}`;
+    const cached = this.searchWorksCache.get(url);
+    if (cached && nowMs() - cached.at < 5 * 60000) return cached.data;
+    const res = await this.searchFetch(url, () => fetchBuffer(url, {
+      timeout: 20000,
+      deadline: SEARCH_HOME_DEADLINE,
+      maxBytes: 8 * 1024 * 1024,
+      headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
+      proxy: this.data.proxy,
+    }), 'high');
+    const data = parseMikanSearch(res.buffer.toString('utf8'), res.url || baseUrl);
+    this.searchWorksCache.set(url, { at: nowMs(), data });
+    if (this.searchWorksCache.size > 60) this.searchWorksCache.delete(this.searchWorksCache.keys().next().value);
+    return data;
+  }
+
   /** 站点搜索 RSS：core / full 两次请求共用同一份结果；快速失败时重试一次 */
   async fetchSearchFeed(url) {
     const cached = this.searchFeedCache.get(url);
@@ -1758,8 +1778,12 @@ class Engine {
   async runSearchCore(job, base, q, limit) {
     const tFeed = nowMs();
     const searchUrl = `${String(base.url).replace(/\/+$/, '')}/RSS/Search?searchStr=${encodeURIComponent(q)}`;
+    // 一边拿「最近有更新的单集」，一边拿「这次一共搜到几部作品」：
+    // 后者是搜索页，老作品在里面，但 RSS 里没有
+    const worksTask = this.fetchSearchWorks(base.url, q).catch(() => []);
     const feed = await this.fetchSearchFeed(searchUrl);
     job.timings.feed = nowMs() - tFeed;
+    const works = await worksTask;
 
     const episodes = [];
     const seen = new Set();
@@ -1774,7 +1798,7 @@ class Engine {
       episodes.push({ hash, title: String(it.title || ''), torrentUrl: enclosure });
       if (episodes.length >= limit) break;
     }
-    if (!episodes.length) throw httpError(404, `没有找到与「${q}」匹配的番剧`, 'SEARCH_EMPTY');
+    if (!episodes.length && !works.length) throw httpError(404, `没有找到与「${q}」匹配的番剧`, 'SEARCH_EMPTY');
     job.timings.episodeCount = episodes.length;
 
     // 单集页只需要番组 id：拿到就立刻并行拉主页，不再等所有单集页结束
@@ -1835,6 +1859,27 @@ class Engine {
         g.subgroups.set(d.subgroupId, s);
       }
     }
+
+    // 把搜索页里的作品补进结果：早就完结、近期没有更新的作品不会出现在 RSS/Search 里，
+    // 只靠单集反推会漏掉它们（例如搜「死神」时只剩当前在播的那一部）
+    works.slice(0, 24).forEach((w, index) => {
+      const existing = groups.get(w.bangumiId);
+      if (existing) {
+        if (!existing.title && w.title) existing.title = w.title;
+        if (!existing.cover && w.cover) existing.cover = w.cover;
+        existing.order = index;
+        return;
+      }
+      groups.set(w.bangumiId, {
+        bangumiId: w.bangumiId,
+        title: w.title || '',
+        cover: w.cover || '',
+        homeUrl: homeUrlFor(base.url, w.bangumiId),
+        subgroups: new Map(),
+        hitCount: 0,
+        order: index,
+      });
+    });
 
     // 一条单集页都没抓到（站点超时/被限速）时，别把它当成「没有匹配的番剧」返回
     if (!groups.size) {
@@ -1897,6 +1942,7 @@ class Engine {
         bgmUrl: (home && home.bgmUrl) || '',
         matched: g.hitCount,
         hitCount: g.hitCount,
+        order: g.order || 0,
         subgroups: merged.slice(0, 40),
       };
       job.groups.push({ bangumiId: g.bangumiId, merged, result, home });
@@ -1904,7 +1950,8 @@ class Engine {
     }));
     job.timings.homeWait = nowMs() - tHome;
 
-    results.sort((a, b) => b.hitCount - a.hitCount || a.title.localeCompare(b.title, 'zh'));
+    // 有近期更新的排在前面，其余按站点搜索结果的顺序
+    results.sort((a, b) => b.hitCount - a.hitCount || (a.order - b.order) || a.title.localeCompare(b.title, 'zh'));
     job.data = {
       query: q,
       baseId: base.id,
@@ -1916,7 +1963,7 @@ class Engine {
     job.timings.core = nowMs() - job.t0;
     const t = job.timings;
     this.log('info', `搜索「${q}」：${results.length} 部番剧 / ${episodes.length} 条单集`
-      + `（feed ${t.feed}ms / 单集 ${t.episodes}ms / 主页等待 ${t.homeWait}ms，共 ${t.core}ms）`);
+      + `（搜索页 ${works.length} 部，feed ${t.feed}ms / 单集 ${t.episodes}ms / 主页等待 ${t.homeWait}ms，共 ${t.core}ms）`);
     return job.data;
   }
 

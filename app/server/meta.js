@@ -289,6 +289,37 @@ function parseMikanHome(html, homeUrl) {
 }
 
 /** 解析 Mikan 单集页面：所属番剧、字幕组、封面 */
+/** 站点搜索页（/Home/Search?searchStr=）→ 番剧列表。
+ *  RSS/Search 只返回最近有更新的条目，早就完结的作品根本不会出现；
+ *  搜索结果要以这个页面为准，再逐部去主页补发布组。 */
+function parseMikanSearch(html, baseUrl) {
+  const text = String(html || '');
+  const works = [];
+  const seen = new Set();
+  const re = /<a[^>]+href=["']([^"']*\/Home\/Bangumi\/(\d+))["'][^>]*>([\s\S]{0,2000}?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    const bangumiId = m[2];
+    if (!bangumiId || seen.has(bangumiId)) continue;
+    const body = m[3] || '';
+    // 只认搜索结果卡片，排除导航 / 推荐位里的同名链接
+    if (!/an-text/.test(body)) continue;
+    seen.add(bangumiId);
+    const attr = /class=["'][^"']*an-text[^"']*["'][^>]*title=["']([^"']*)["']/i.exec(body);
+    const inner = /class=["'][^"']*an-text[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(body);
+    const title = cleanText(attr ? attr[1] : (inner ? inner[1] : ''));
+    const coverRaw = (/data-src=["']([^"']+)["']/i.exec(body) || [])[1] || '';
+    works.push({
+      bangumiId,
+      title,
+      // 去掉 ?width=&height=&format= 之类的缩略图参数，尽量拿原图
+      cover: coverRaw ? absoluteUrl(baseUrl, decodeEntities(coverRaw.split('?')[0])) : '',
+      homeUrl: absoluteUrl(baseUrl, m[1]),
+    });
+  }
+  return works;
+}
+
 function parseEpisodePage(html, pageUrl) {
   const text = String(html || '');
   const url = String(pageUrl || '');
@@ -337,7 +368,7 @@ async function fetchSubMeta(subUrl, opts) {
 }
 
 module.exports = {
-  deriveHomeUrl, parseMikanHome, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes,
+  deriveHomeUrl, parseMikanHome, parseMikanSearch, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes,
   parseSizeText, classifySizeItem, sizeStats,
   fetchSubMeta, cleanText, cleanFeedTitle, rssUrlFor, homeUrlFor,
 };
