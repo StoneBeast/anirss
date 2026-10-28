@@ -2057,8 +2057,12 @@ html[data-theme="light"] .field-hint.bad { color: #b52d43; }
 /* 搜索等待中：阶段提示 + 骨架，避免长时间只有一行小字 */
 .search-progress { margin: 8px 0 12px; }
 .search-progress-head { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--text); }
-.search-progress-steps { margin: 7px 0 12px; letter-spacing: 0.2px; }
-.search-elapsed { margin-left: auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.search-history { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 4px; }
+.search-history:empty { display: none; }
+.chip-btn { cursor: pointer; font: inherit; font-size: 10.5px; font-weight: 600; }
+.chip-btn:hover { color: var(--text); border-color: var(--line); background: rgba(255, 255, 255, 0.07); }
+.search-history-clear { width: 22px; height: 22px; color: var(--faint); }
+.search-history-clear:hover { color: var(--text); }
 .search-pending {
   display: flex;
   align-items: center;

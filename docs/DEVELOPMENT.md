@@ -17,6 +17,7 @@ node dev/perf-check.js  # 性能行为验证：静态资源与 /api/state 的 gz
 node dev/ui-actions.js  # 浏览器交互测试（75 项）：需要 Chrome CDP 9222 + 演示实例 8777
 node dev/ui-subs-check.js # 字幕弹窗抽查：弹窗打开、zip 上传入库、列表刷新（同上前提）
 node dev/ui-patch-check.js # keyed patch 抽查：软刷新后列表节点复用、滚动不跳（同上前提）
+node dev/ui-modal-check.js # 弹窗误触抽查：点表单旁边/拖选松手到外面不会把表单关掉（同上前提，可用 ANIRSS_APP 指向别的实例）
 node dev/ui-shot.js     # 重新生成 docs/ 下的截图
 node dev/ui-empty.js    # 空数据首启引导截图
 ```
@@ -69,37 +70,54 @@ python dev/repack-fpk.py anirss.fpk anirss-1.13.2.fpk
 
 `repack-fpk.py` 只重写外层 tar（把生命周期脚本改成 `0755`），不改动 `app.tgz`，因此 `manifest.checksum` 仍然有效。构建后用 `tar -tzf` 检查顶层结构：`app.tgz`、`manifest`、`cmd/`、`config/`、`wizard/`、两个图标。
 
-### 本地装机测试：用 dev 版本号，不动仓库
+### 本地装机测试：别动仓库里的版本号
 
-fnOS 只允许安装版本号高于已装版本的 FPK，所以反复真机测试时不能一直用 `manifest` 里的正式版本号，但也不该为了测试去改仓库（版本号改动会跟着 PR 进 `main`）。
+fnOS 只允许安装版本号高于已装版本的 FPK，所以反复真机测试时不能一直用 `manifest` 里的正式版本号，但也不该为了测试去改仓库（版本号改动会跟着 PR 进 `main`）。做法是：**dev 的差异只写进打包产物**。
 
-做法：**dev 版本号只写进打包产物**。
+#### 推荐：给 dev 包一个独立身份，与正式版共存
 
 ```bash
-# 1) 正常打包，仓库里的版本号保持不动
-fnpack.exe build -d <项目目录>
-
-# 2) 把 fpk 里的 manifest 版本号换成 dev 号，同时修正 cmd/* 权限
-python dev/pack-dev.py anirss.fpk anirss-dev.fpk
-#   release 1.13.2 -> dev 1.13.912      （900 + git 提交数）
-
-# 也可以显式指定
-python dev/pack-dev.py anirss.fpk anirss-dev.fpk --version 1.13.2.7
+fnpack.exe build -d <项目目录>                      # 仓库版本号保持不动
+python dev/pack-dev.py anirss.fpk anirss-dev.fpk --dev-identity
+# 独立身份：appname=anirss-dev 端口=18182 入口=anirss-dev.main
 ```
 
-`pack-dev.py` 只重写外层 tar 里的 `manifest` 版本行：`app.tgz` 与 `manifest.checksum` 原样保留（checksum 只覆盖 `app.tgz`），所以包仍然有效；它同时套用 `repack-fpk.py` 的权限修正，可以单独使用。装完 `git status` 仍是干净的。
+`--dev-identity` 会把这些东西一起换掉，装完就是应用中心里的第二个条目：
 
-号段选择（先花 5 分钟实测一次 fnOS 接受哪种）：
+| 位置 | 改什么 |
+| --- | --- |
+| `manifest` | `appname`、`display_name`（加 ` dev`）、`service_port`、`desktop_applaunchname` |
+| `app/ui/config` | 桌面入口 key（`anirss.main` → `anirss-dev.main`）、端口、标题 |
+| `config/privilege` | 运行用户/组（`anirss` → `anirss-dev`） |
 
-| 版本号 | 说明 | 注意 |
+好处是两边**互不覆盖**：正式版照常升级，dev 包想装多少次装多少次，数据目录由 fnOS 按 appname 隔离（`/var/apps/anirss-dev/var` vs `/var/apps/anirss/var`）。代价：
+
+- dev 应用是另一个运行用户，需要在它的「应用设置 → 访问权限」里重新授权 qB 下载目录与硬链接目标目录；
+- 配置不互通，想用现有配置就在正式版里「配置导出」，再在 dev 版里导入。
+
+版本号仍按 `900 + 提交数` 递增，但只和它自己的上一版比较，所以不会把正式版挡在门外。
+
+#### 次选：只换版本号，数字段递增
+
+```bash
+python dev/pack-dev.py anirss.fpk anirss-dev.fpk                      # 900 + git 提交数
+python dev/pack-dev.py anirss.fpk anirss-dev.fpk --version 1.13.917
+```
+
+`pack-dev.py` 重写外层 tar 里的 `manifest`（版本、必要时的 checksum），`app.tgz` 没动时 checksum 保持不变，所以包仍然有效；它同时套用 `repack-fpk.py` 的权限修正，可以单独使用。装完 `git status` 仍是干净的。
+
+代价是：dev 号高于正式版，之后装正式版会被判为降级，**得先卸载 dev 包**（卸载会带走 `/var/apps/anirss/var` 里的配置和下载记录，先导出配置）。
+
+#### 不要用 `-dev` 后缀
+
+**实测结论（2026-10，fnOS）：`-dev` 后缀不参与版本比较。** 装 `1.13.3-dev15` 之后再装 `1.13.3-dev16`，fnOS 判为同一版本、拒绝覆盖；而 `1.13.3-dev15` 本身能装上 `1.13.2`，说明后缀格式合法，只是不参与比较。
+
+| 想写 | 实际参与比较的版本 | 能否覆盖上一版 dev |
 | --- | --- | --- |
-| `1.13.912`（默认，900 + 提交数） | 纯三段数字，fnOS 一定接受；随提交单调递增 | 高于下一个**正式 patch 版**（如 1.13.3），装正式版前需先卸载 dev |
-| `1.13.2.7`（`--version` 指定） | 四段；天然介于 `1.13.2` 与 `1.13.3` 之间 | 需要 fnOS 支持四段，实测通过后最省心 |
-| `1.13.2-dev.37` | 语义清楚 | 多数 NAS 的版本比较不认后缀，容易判成同版本或格式非法 |
+| `1.13.917`（900 + 提交数） | `1.13.917` | ✅ |
+| `1.13.3-dev15` → `1.13.3-dev16` | 都是 `1.13.3` | ❌ |
 
-实测方法：测试机先装 `1.13.2`，再装一个 `1.13.2.1`；应用中心显示「升级」即四段可用，报版本非法就回到默认三段。
-
-如果这类真机测试很频繁，可以给开发版单独一个身份，与正式版共存：`appname = anirss-dev`、`service_port = 18182`，版本号不变也能反复安装，数据目录由 fnOS 按 appname 自动隔离。
+四段号（`1.13.3.16`）仍未验证：测试机先装 `1.13.2`，再装 `1.13.2.1`，应用中心显示「升级」即四段可用。即便可用，之后装 `1.13.3` 正式版也会被判为降级，所以还是推荐独立身份。
 
 > dev 包只用于本机测试，不要提交、不要发布。仓库 `manifest` 的版本号仍然只在 `release/x.y.z` 的 PR 里改。
 
