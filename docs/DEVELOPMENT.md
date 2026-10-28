@@ -69,6 +69,42 @@ python dev/repack-fpk.py anirss.fpk anirss-1.13.2.fpk
 
 `repack-fpk.py` 只重写外层 tar（把生命周期脚本改成 `0755`），不改动 `app.tgz`，因此 `manifest.checksum` 仍然有效。构建后用 `tar -tzf` 检查顶层结构：`app.tgz`、`manifest`、`cmd/`、`config/`、`wizard/`、两个图标。
 
+### 本地装机测试：用 dev 版本号，不动仓库
+
+fnOS 只允许安装版本号高于已装版本的 FPK，所以反复真机测试时不能一直用 `manifest` 里的正式版本号，但也不该为了测试去改仓库（版本号改动会跟着 PR 进 `main`）。
+
+做法：**dev 版本号只写进打包产物**。
+
+```bash
+# 1) 正常打包，仓库里的版本号保持不动
+fnpack.exe build -d <项目目录>
+
+# 2) 把 fpk 里的 manifest 版本号换成 dev 号，同时修正 cmd/* 权限
+python dev/pack-dev.py anirss.fpk anirss-dev.fpk
+#   release 1.13.2 -> dev 1.13.912      （900 + git 提交数）
+
+# 也可以显式指定
+python dev/pack-dev.py anirss.fpk anirss-dev.fpk --version 1.13.2.7
+```
+
+`pack-dev.py` 只重写外层 tar 里的 `manifest` 版本行：`app.tgz` 与 `manifest.checksum` 原样保留（checksum 只覆盖 `app.tgz`），所以包仍然有效；它同时套用 `repack-fpk.py` 的权限修正，可以单独使用。装完 `git status` 仍是干净的。
+
+号段选择（先花 5 分钟实测一次 fnOS 接受哪种）：
+
+| 版本号 | 说明 | 注意 |
+| --- | --- | --- |
+| `1.13.912`（默认，900 + 提交数） | 纯三段数字，fnOS 一定接受；随提交单调递增 | 高于下一个**正式 patch 版**（如 1.13.3），装正式版前需先卸载 dev |
+| `1.13.2.7`（`--version` 指定） | 四段；天然介于 `1.13.2` 与 `1.13.3` 之间 | 需要 fnOS 支持四段，实测通过后最省心 |
+| `1.13.2-dev.37` | 语义清楚 | 多数 NAS 的版本比较不认后缀，容易判成同版本或格式非法 |
+
+实测方法：测试机先装 `1.13.2`，再装一个 `1.13.2.1`；应用中心显示「升级」即四段可用，报版本非法就回到默认三段。
+
+如果这类真机测试很频繁，可以给开发版单独一个身份，与正式版共存：`appname = anirss-dev`、`service_port = 18182`，版本号不变也能反复安装，数据目录由 fnOS 按 appname 自动隔离。
+
+> dev 包只用于本机测试，不要提交、不要发布。仓库 `manifest` 的版本号仍然只在 `release/x.y.z` 的 PR 里改。
+
+### 发布注意
+
 > ⚠️ `manifest` 里**不要**再写 `disable_authorization_path = true`。这一行会隐藏 fnOS「应用设置 → 访问权限」，而补番硬链接需要用户在那里授权 qB 下载目录与目标目录（应用以独立用户 `anirss` 运行，未授权时读不到文件）。`config/resource` 的 `data-share` 保持为空即可，用户通过「访问权限 → 添加」自行授权任意目录。
 
 ## 目录结构
