@@ -8,7 +8,7 @@ const path = require('path');
 const { parseFeed, decodeEntities } = require('../app/server/rss');
 const { parseTorrentInfo, magnetInfoHash } = require('../app/server/bencode');
 const {
-  deriveHomeUrl, parseMikanHome, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes, cleanFeedTitle,
+  deriveHomeUrl, parseMikanHome, parseMikanSearch, parseEpisodePage, parseSubgroups, parseSubgroupEpisodes, cleanFeedTitle,
   parseSizeText, classifySizeItem, sizeStats,
 } = require('../app/server/meta');
 const { normalizeProxy, isNoProxy } = require('../app/server/proxy');
@@ -204,6 +204,37 @@ test('解析 Mikan 番组主页封面 / bgm 链接 / 放送信息', () => {
   assert.strictEqual(meta.episodes, '12');
   assert.strictEqual(meta.startDate, '10/1/2026');
   assert.strictEqual(meta.officialSite, 'https://fxkurumi-info.com/');
+});
+
+test('解析 Mikan 搜索页：多部作品、去重、排除导航链接', () => {
+  // RSS/Search 只有近期更新的条目，搜索页才是完整作品列表（搜「死神」时 RSS 只有 1 部，页面有 4 部）
+  const html = `
+    <ul class="list-inline an-ul">
+      <li><a href="/Home/Bangumi/4032" target="_blank">
+        <span data-src="/images/Bangumi/202607/a7ad9c81.jpg?width=400&amp;height=400&amp;format=webp" class="b-lazy"></span>
+        <div class="an-info"><div class="an-info-group">
+          <div class="an-text" title="&#x6B7B;&#x795E; &#x5343;&#x5E74;&#x8840;&#x6218;&#x7BC7;-&#x7978;&#x8FDB;&#x8C2D;-" style="width:170px;">&#x6B7B;&#x795E; &#x5343;&#x5E74;&#x8840;&#x6218;&#x7BC7;-&#x7978;&#x8FDB;&#x8C2D;-</div>
+        </div></div></a></li>
+      <li><a href="/Home/Bangumi/2841" target="_blank">
+        <span data-src="/images/Bangumi/202210/2b4d3c36.jpg?width=400" class="b-lazy"></span>
+        <div class="an-info"><div class="an-info-group">
+          <div class="an-text" title="&#x6B7B;&#x795E; &#x5343;&#x5E74;&#x8840;&#x6218;&#x7BC7;" style="width:170px;">&#x6B7B;&#x795E; &#x5343;&#x5E74;&#x8840;&#x6218;&#x7BC7;</div>
+        </div></div></a></li>
+      <li><a href="https://mikanime.tv/Home/Bangumi/4032" target="_blank">
+        <div class="an-info"><div class="an-info-group">
+          <div class="an-text" title="重复的一条">重复的一条</div>
+        </div></div></a></li>
+    </ul>
+    <div class="nav"><a href="/Home/Bangumi/9999">导航里的其他番组</a></div>`;
+
+  const works = parseMikanSearch(html, 'https://mikanime.tv/Home/Search?searchStr=%E6%AD%BB%E7%A5%9E');
+  assert.strictEqual(works.length, 2);
+  assert.deepStrictEqual(works.map((w) => w.bangumiId), ['4032', '2841']);
+  assert.strictEqual(works[0].title, '死神 千年血战篇-祸进谭-');
+  // 缩略图参数被去掉，拿原图
+  assert.strictEqual(works[0].cover, 'https://mikanime.tv/images/Bangumi/202607/a7ad9c81.jpg');
+  assert.strictEqual(works[1].title, '死神 千年血战篇');
+  assert.strictEqual(works[0].homeUrl, 'https://mikanime.tv/Home/Bangumi/4032');
 });
 
 test('代理配置规范化与 noProxy', () => {
