@@ -88,9 +88,6 @@
     searchError: '',
     searchPending: false,
     searchStage: '',
-    searchStartedAt: 0,
-    searchElapsed: 0,
-    searchTimer: null,
     searchSeq: 0,
     guessResult: null,
     confirmResolve: null,
@@ -874,7 +871,6 @@
           <div class="card-head">
             <div>
               <div class="card-title">最近下载</div>
-              <div class="card-sub">提交到 qBittorrent 的最新条目</div>
             </div>
             <a class="card-link" href="#/downloads">全部记录 ${icon('chevron-right')}</a>
           </div>
@@ -902,7 +898,6 @@
             <div class="card-head">
               <div>
                 <div class="card-title">接下来</div>
-                <div class="card-sub">按追番间隔自动检查</div>
               </div>
             </div>
             <div class="card-body" style="padding-top:10px">
@@ -931,7 +926,6 @@
         <div class="card-head">
           <div>
             <div class="card-title">三步开始</div>
-            <div class="card-sub">完成设置后，检查与下载会自动进行</div>
           </div>
           <span class="chip accent">${icon('zap')}自动化</span>
         </div>
@@ -1077,7 +1071,6 @@
       <div class="page-head">
         <div>
           <h1 class="page-title">追番</h1>
-          <p class="page-sub">一个追番 = 一个 RSS 地址 + 一组正则规则 + 一个存储路径</p>
         </div>
         <div class="page-actions">
           <button class="btn" data-action="open-search">${icon('search')}搜索番剧</button>
@@ -1102,7 +1095,7 @@
         <div class="empty">
           <div class="empty-icon">${icon('rss', 30)}</div>
           <h3>还没有追番</h3>
-          <p>先在「站点与路径」里准备基础地址，然后选择站点、填写路径和正则。创建时只会记录现有条目，之后自动下载新增匹配项。</p>
+          <p>先在「站点与路径」里准备基础地址，再选择站点、填写路径和正则。</p>
           <div class="empty-actions">
             <button class="btn btn-primary" data-action="open-sub">${icon('plus')}新增追番</button>
             <button class="btn" data-action="open-search">${icon('search')}搜索番剧</button>
@@ -1410,7 +1403,6 @@
       <div class="page-head">
         <div>
           <h1 class="page-title">补番</h1>
-          <p class="page-sub">磁力链接或种子文件，单次下载；与追番共用同一套存储路径预设</p>
         </div>
         <div class="page-actions">
           <button class="btn" data-action="extras-status">${icon('refresh')}刷新状态</button>
@@ -1445,7 +1437,6 @@
         <div class="card-head">
           <div>
             <div class="card-title">新增补番</div>
-            <div class="card-sub">支持批量：磁力链接每行一条，种子文件可多选</div>
           </div>
         </div>
         <div class="card-body">
@@ -1460,16 +1451,16 @@
                 <input class="input" id="x-files" type="file" accept=".torrent,application/x-bittorrent" multiple>
               </div>
               <div class="field">
-                <label class="field-label" for="f-name">名称 <span class="tip">可选</span></label>
+                <label class="field-label" for="f-name">名称</label>
                 <input class="input" id="f-name" placeholder="留空自动用磁力或种子文件名" maxlength="120">
-                <div class="field-hint" id="f-name-hint">留空时使用磁力链接里的 dn 或种子文件名</div>
+                <div class="field-hint" id="f-name-hint"></div>
               </div>
               <div class="field">
-                <label class="field-label" for="x-category">分类 <span class="tip">可选</span></label>
+                <label class="field-label" for="x-category">分类</label>
                 <input class="input" id="x-category" placeholder="例如 anime">
               </div>
               <div class="field">
-                <label class="field-label" for="x-tags">标签 <span class="tip">可选</span></label>
+                <label class="field-label" for="x-tags">标签</label>
                 <input class="input" id="x-tags" placeholder="逗号分隔">
               </div>
               <div class="field">
@@ -1536,12 +1527,11 @@
                   <option value="season" ${hl.mode === 'mirror' ? '' : 'selected'}>正片 + 字幕（平铺到季目录）</option>
                   <option value="mirror" ${hl.mode === 'mirror' ? 'selected' : ''}>全部文件（保持种子内相对路径）</option>
                 </select>
-                <div class="field-hint">推荐「正片 + 字幕」：自动跳过 CDs、Scans、NCOP 等</div>
+                <div class="field-hint">自动跳过 CDs、Scans、NCOP 等</div>
               </div>
               <div class="field">
-                <label class="field-label" for="hl-default-dest">默认目标模板 <span class="tip">可选</span></label>
+                <label class="field-label" for="hl-default-dest">默认目标模板</label>
                 <input class="input mono" id="hl-default-dest" value="${esc(hl.defaultDest)}" placeholder="/pathb/动画/${'${name}'}/Season ${'${season}'}" spellcheck="false">
-                <div class="field-hint">新增补番时自动填到「硬链接到」，也可以直接选路径预设</div>
               </div>
               <div class="field">
                 <label class="field-label" for="hl-video-exts">视频扩展名</label>
@@ -2170,19 +2160,13 @@
       </div>`).join('')}</div>`;
   }
 
-  function searchElapsedText() {
-    return `${(S.searchElapsed / 1000).toFixed(1)}s`;
-  }
-
   function searchProgressHTML() {
     return `
       <div class="search-progress">
         <div class="search-progress-head">
           <span class="spinner"></span>
           <span class="search-stage">${esc(S.searchStage || '正在搜索站点…')}</span>
-          <span class="search-elapsed">${searchElapsedText()}</span>
         </div>
-        <div class="search-progress-steps small faint">站点搜索 → 单集详情 → 番组主页 → 字幕组体积</div>
       </div>
       ${searchSkeletonHTML(3)}`;
   }
@@ -2193,16 +2177,13 @@
       return `<div class="notice red">${icon('alert')}<div>${esc(S.searchError)}</div></div>`;
     }
     const r = S.searchResult;
-    if (!r) {
-      return `<div class="qb-empty">输入番剧名后点「搜索」。搜索会读取站点公开页面，不会创建追番。</div>`;
-    }
+    if (!r) return '';
     if (!r.results.length) {
       return `<div class="qb-empty">没有找到匹配的番剧，换个关键词或到站点确认名字。</div>`;
     }
-    const spent = r.timings && r.timings.total ? ` · 耗时 ${(r.timings.total / 1000).toFixed(1)}s` : '';
     return `
-      <div class="search-summary small faint">搜索「${esc(r.query)}」：${r.results.length} 部番剧 / ${r.totalEpisodes} 条单集 · ${esc(r.baseName || '')}${spent}</div>
-      ${S.searchPending ? `<div class="search-pending small"><span class="spinner"></span> 正在补齐字幕组精确体积…<span class="search-elapsed">${searchElapsedText()}</span></div>` : ''}
+      <div class="search-summary small faint">搜索「${esc(r.query)}」：${r.results.length} 部番剧 / ${r.totalEpisodes} 条单集 · ${esc(r.baseName || '')}</div>
+      ${S.searchPending ? `<div class="search-pending small"><span class="spinner"></span> 正在补齐字幕组精确体积…</div>` : ''}
       <div class="search-list">
         ${r.results.map((g) => `
           <article class="search-hit">
@@ -2254,25 +2235,43 @@
     if (box) box.innerHTML = searchResultsHTML();
   }
 
-  /** 等待中的秒数走单独的 ticker：只改文本，不重建整个结果列表 */
-  function startSearchTicker() {
-    stopSearchTicker();
-    S.searchStartedAt = Date.now();
-    S.searchElapsed = 0;
-    S.searchTimer = setInterval(() => {
-      S.searchElapsed = Date.now() - S.searchStartedAt;
-      document.querySelectorAll('#search-results .search-elapsed').forEach((el) => {
-        el.textContent = searchElapsedText();
-      });
-    }, 200);
+  /* 搜索历史：只存在浏览器本地，换设备/清缓存就没了，不需要进配置 */
+  const SEARCH_HISTORY_KEY = 'anirss:search-history';
+  const SEARCH_HISTORY_MAX = 8;
+
+  function readSearchHistory() {
+    try {
+      const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list)
+        ? list.filter((x) => typeof x === 'string' && x.trim()).slice(0, SEARCH_HISTORY_MAX)
+        : [];
+    } catch {
+      return [];
+    }
   }
 
-  function stopSearchTicker() {
-    if (S.searchTimer) {
-      clearInterval(S.searchTimer);
-      S.searchTimer = null;
-    }
-    if (S.searchStartedAt) S.searchElapsed = Date.now() - S.searchStartedAt;
+  function rememberSearch(query) {
+    const q = String(query || '').trim();
+    if (!q) return;
+    const rest = readSearchHistory().filter((x) => x.toLowerCase() !== q.toLowerCase());
+    try {
+      localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify([q, ...rest].slice(0, SEARCH_HISTORY_MAX)));
+    } catch { /* 隐私模式写不了，忽略 */ }
+  }
+
+  function clearSearchHistory() {
+    try { localStorage.removeItem(SEARCH_HISTORY_KEY); } catch { /* 同上 */ }
+  }
+
+  function renderSearchHistory() {
+    const box = $('#search-history');
+    if (!box) return;
+    const items = readSearchHistory();
+    box.innerHTML = items.length
+      ? items.map((q) => `<button class="chip chip-btn" type="button" data-action="search-history" data-query="${esc(q)}">${esc(q)}</button>`).join('')
+        + `<button class="icon-btn search-history-clear" type="button" data-action="search-history-clear" title="清除搜索历史">${icon('trash', 13)}</button>`
+      : '';
   }
 
   function openSearchModal() {
@@ -2286,8 +2285,6 @@
     S.searchLoading = false;
     S.searchPending = false;
     S.searchStage = '';
-    stopSearchTicker();
-    S.searchStartedAt = 0;
     const preferred = d.bases.find((b) => /mikan/i.test(b.url)) || d.bases[0];
     openModal(`
       <div class="modal-backdrop" data-backdrop="modal">
@@ -2295,7 +2292,6 @@
           <div class="modal-head">
             <div>
               <div class="modal-title">搜索番剧</div>
-              <div class="modal-sub">在配置好的站点里搜索，选中发布组后自动填好追番表单</div>
             </div>
             <button class="icon-btn modal-close" data-action="close-modal">${icon('x')}</button>
           </div>
@@ -2315,13 +2311,14 @@
               </div>
               <div class="btn-row">
                 <button class="btn btn-primary" type="submit">${icon('search')}搜索</button>
-                <span class="small faint">站点搜索需要该站点支持 Mikan 式搜索接口</span>
               </div>
             </form>
+            <div id="search-history" class="search-history"></div>
             <div id="search-results">${searchResultsHTML()}</div>
           </div>
         </div>
       </div>`, 'search');
+    renderSearchHistory();
     setTimeout(() => { const el = $('#search-q'); if (el) el.focus(); }, 50);
   }
 
@@ -2343,7 +2340,8 @@
     S.searchLoading = true;
     S.searchPending = false;
     S.searchStage = '正在搜索站点…';
-    startSearchTicker();
+    rememberSearch(q);
+    renderSearchHistory();
     renderSearchResults();
     if (btn) {
       btn.dataset.busy = '1';
@@ -2358,7 +2356,6 @@
         core = await api(`${query}&phase=core`);
       } catch (e) {
         if (seq !== S.searchSeq) return;
-        stopSearchTicker();
         S.searchLoading = false;
         S.searchError = e.message;
         renderSearchResults();
@@ -2375,27 +2372,19 @@
       S.searchLoading = false;
       S.searchPending = !!core.pending && core.results.length > 0;
       S.searchStage = '正在补齐字幕组体积…';
-      // 第二阶段的秒表从 core 返回时重新计，避免把首屏耗时算进「补齐体积」
-      S.searchStartedAt = Date.now();
-      S.searchElapsed = 0;
       renderSearchResults();
 
       // 第二阶段：字幕组 RSS 的精确集数 / 种子体积，回来后原地替换
-      if (!S.searchPending) {
-        stopSearchTicker();
-        return;
-      }
+      if (!S.searchPending) return;
       try {
         const full = await api(`${query}&phase=full`);
         if (seq !== S.searchSeq) return;
         S.searchResult = full;
         S.searchPending = false;
-        stopSearchTicker();
         renderSearchResults();
       } catch (e) {
         if (seq !== S.searchSeq) return;
         S.searchPending = false;
-        stopSearchTicker();
         renderSearchResults();
         toast(`体积统计未完成，先显示番组主页大小：${e.message}`, 'warn');
       }
@@ -2527,7 +2516,6 @@
       <div class="page-head">
         <div>
           <h1 class="page-title">站点与路径</h1>
-          <p class="page-sub">站点负责拼接 URL，路径负责保存位置；两者都可以在追番里现场覆盖</p>
         </div>
       </div>
 
@@ -2545,7 +2533,6 @@
           <div class="card-head">
             <div>
               <div class="card-title">站点基础地址</div>
-              <div class="card-sub">新增追番时直接选择，路径单独填写</div>
             </div>
             <button class="btn btn-sm" data-action="open-base">${icon('plus')}新增</button>
           </div>
@@ -2574,7 +2561,6 @@
           <div class="card-head">
             <div>
               <div class="card-title">存储路径预设</div>
-              <div class="card-sub">选择预设会填入追番，也可在追番里继续修改</div>
             </div>
             <button class="btn btn-sm" data-action="open-path">${icon('plus')}新增</button>
           </div>
@@ -2617,7 +2603,6 @@
       <div class="page-head">
         <div>
           <h1 class="page-title">连接设置</h1>
-          <p class="page-sub">连接到本机或局域网内的 qBittorrent WebUI</p>
         </div>
       </div>
 
@@ -2697,11 +2682,11 @@
                   <input class="input" id="proxy-port" type="number" min="1" max="65535" value="${proxy.port || ''}" placeholder="7890">
                 </div>
                 <div class="field">
-                  <label class="field-label" for="proxy-user">用户名 <span class="tip">可选</span></label>
+                  <label class="field-label" for="proxy-user">用户名</label>
                   <input class="input" id="proxy-user" value="${esc(proxy.username || '')}" autocomplete="off">
                 </div>
                 <div class="field">
-                  <label class="field-label" for="proxy-pass">密码 <span class="tip">可选</span></label>
+                  <label class="field-label" for="proxy-pass">密码</label>
                   <input class="input" id="proxy-pass" type="password" placeholder="${proxy.hasPassword ? '已保存，留空不修改' : '没有密码可留空'}" autocomplete="new-password">
                 </div>
                 <div class="field full">
@@ -2725,7 +2710,6 @@
             <div class="card-head">
               <div>
                 <div class="card-title">如何开启 WebUI</div>
-                <div class="card-sub">qBittorrent 默认端口 8080</div>
               </div>
             </div>
             <div class="card-body" style="padding-top:12px">
@@ -2774,7 +2758,7 @@
   function connResultHTML() {
     const result = S.testResult || (S.data && S.data.qb.lastTest);
     if (!result) {
-      return `<div class="conn-result"><div class="conn-result-head">${icon('info', 14)} 尚未测试连接</div><p>保存设置后会自动测试一次；也可以点「仅测试连接」使用当前表单值验证。</p></div>`;
+      return `<div class="conn-result"><div class="conn-result-head">${icon('info', 14)} 尚未测试连接</div></div>`;
     }
     if (result.ok) {
       const defaultPath = result.defaultSavePath || '';
@@ -2807,7 +2791,7 @@
   function proxyResultBlock() {
     const r = S.proxyTestResult;
     if (!r) {
-      return `<div class="conn-result"><div class="conn-result-head">${icon('info', 14)} 尚未测试代理</div><p>保存后可点「测试代理」，默认请求 <code>https://mikanime.tv/</code>。</p></div>`;
+      return `<div class="conn-result"><div class="conn-result-head">${icon('info', 14)} 尚未测试代理</div></div>`;
     }
     if (r.ok) {
       return `
@@ -3027,6 +3011,19 @@
         break;
       case 'open-search':
         openSearchModal();
+        break;
+      case 'search-history': {
+        const form = $('#search-form');
+        const input = $('#search-q');
+        const q = el.dataset.query || '';
+        if (!form || !input || !q) break;
+        input.value = q;
+        await runSearch(form);
+        break;
+      }
+      case 'search-history-clear':
+        clearSearchHistory();
+        renderSearchHistory();
         break;
       case 'pick-subgroup':
         pickSubgroup(el);
@@ -3442,8 +3439,7 @@
     S.modalEdited = false;
     S.subTemplate = null;
     S.modalDirty = false;
-    // 关窗后不再关心进行中的搜索：停掉计时并把序号推高，回来的响应会被丢弃
-    stopSearchTicker();
+    // 关窗后不再关心进行中的搜索：序号推高，回来的响应会被丢弃
     S.searchSeq++;
     S.searchLoading = false;
     S.searchPending = false;
@@ -3622,7 +3618,6 @@
           <div class="modal-head">
             <div>
               <div class="modal-title">${base ? '编辑站点' : '新增站点'}</div>
-              <div class="modal-sub">只填到站点根目录，追番路径在新增追番时拼接${base && used ? `。修改地址会同步 ${used} 个追番` : ''}</div>
             </div>
             <button class="icon-btn modal-close" type="button" data-action="close-modal">${icon('x')}</button>
           </div>
@@ -3662,7 +3657,6 @@
           <div class="modal-head">
             <div>
               <div class="modal-title">${path ? '编辑存储路径' : '新增存储路径'}</div>
-              <div class="modal-sub">作为追番的默认保存位置，可在追番里继续修改</div>
             </div>
             <button class="icon-btn modal-close" type="button" data-action="close-modal">${icon('x')}</button>
           </div>
@@ -3733,11 +3727,11 @@
                 <div class="field full">
                   <label class="field-label" for="f-name">追番名称 <span class="req">*</span></label>
                   <input class="input" id="f-name" value="${esc(v.name)}" placeholder="填写追番地址后自动获取，也可以自己改" maxlength="80">
-                  <div class="field-hint" id="f-name-hint">填写追番地址后会自动获取名称，也可以自己修改</div>
+                  <div class="field-hint" id="f-name-hint"></div>
                 </div>
 
                 <div class="field full">
-                  <div class="field-label">追番地址 <span class="tip">基础地址 + 路径，或直接粘贴完整 URL</span></div>
+                  <div class="field-label">追番地址</div>
                   <div class="seg">
                     <button class="seg-btn ${mode === 'base' ? 'active' : ''}" type="button" data-action="sub-mode" data-mode="base">站点预设 + 路径</button>
                     <button class="seg-btn ${mode === 'full' ? 'active' : ''}" type="button" data-action="sub-mode" data-mode="full">完整 URL</button>
@@ -3772,7 +3766,7 @@
                 <div class="field">
                   <label class="field-label">包含正则 <span class="tip">每行一条，留空 = 全收</span></label>
                   <textarea class="textarea" id="f-include" placeholder="1080p&#10;简日|繁日" spellcheck="false">${esc(v.include)}</textarea>
-                  <div class="field-hint">任意一条命中即匹配；点击下方常用表达式可快速追加。</div>
+                  <div class="field-hint">任意一条命中即匹配。</div>
                 </div>
                 <div class="field">
                   <label class="field-label">排除正则 <span class="tip">每行一条</span></label>
@@ -3813,7 +3807,7 @@
                 <div class="field full"><div class="divider" style="margin:0"></div></div>
 
                 <div class="field full">
-                  <label class="field-label" for="f-savepath">存储路径 <span class="tip">预设可套用，也可现场修改</span></label>
+                  <label class="field-label" for="f-savepath">存储路径</label>
                   <div class="input-group">
                     <select class="select path-preset-select" id="f-path-preset">${pathPresetOptions}</select>
                     <input class="input mono" id="f-savepath" value="${esc(v.savePath || '')}" placeholder="留空 = qBittorrent 默认路径" spellcheck="false">
@@ -3831,11 +3825,11 @@
                   </div>
                 </div>
                 <div class="field">
-                  <label class="field-label" for="f-category">分类 <span class="tip">可选</span></label>
+                  <label class="field-label" for="f-category">分类</label>
                   <input class="input" id="f-category" value="${esc(v.category || '')}" placeholder="例如：anime" maxlength="80">
                 </div>
                 <div class="field">
-                  <label class="field-label" for="f-tags">标签 <span class="tip">可选，逗号分隔</span></label>
+                  <label class="field-label" for="f-tags">标签 <span class="tip">逗号分隔</span></label>
                   <input class="input" id="f-tags" value="${esc(v.tags || '')}" placeholder="rss,1080p" maxlength="120">
                 </div>
                 <div class="field">
@@ -4123,13 +4117,13 @@
     if (!S.modal || S.modal.type !== 'sub' || S.nameTouched) return;
     const url = currentSubFormUrl();
     if (!url || !isHttp(url)) {
-      setNameHint('填写追番地址后会自动获取名称，也可以自己修改');
+      setNameHint('');
       return;
     }
     let parsed = null;
     try { parsed = new URL(url); } catch { /* ignore */ }
     if (parsed && (parsed.pathname === '/' || parsed.pathname === '') && !parsed.search) {
-      setNameHint('填写追番路径后会自动获取名称，也可以自己修改');
+      setNameHint('');
       return;
     }
     if (S.lastResolveUrl === url) return;
@@ -4648,7 +4642,7 @@
         S.nameTouched = !!t.value.trim();
         S.nameToken++;
         clearTimeout(S.nameTimer);
-        setNameHint(S.nameTouched ? '使用自定义名称' : '填写追番地址后会自动获取名称');
+        setNameHint('');
       }
       composePathFromTemplate(t.closest('form') || document);
       if (t.closest('#extra-form')) updateHardlinkPreview();
@@ -4742,10 +4736,8 @@
     if (Date.now() - S.modalOpenedAt < BACKDROP_MIN_OPEN_MS) return;
     if (kind === 'modal') {
       if (S.confirmResolve) { resolveConfirm(false); return; }
-      if (S.modalEdited) {
-        toast('表单已填写内容：请点「取消」或右上角 × 关闭', 'info');
-        return;
-      }
+      // 已经填过内容：不响应点遮罩（不弹提示），只能用「取消」「×」或 Esc 退出
+      if (S.modalEdited) return;
       closeModal();
       return;
     }

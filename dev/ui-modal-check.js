@@ -148,14 +148,14 @@ async function main() {
   await clickAt(geo.backdrop[0], geo.backdrop[1]);
   check('空表单点遮罩 → 关闭', !(await modalOpen()));
 
-  // 2. 填过内容点遮罩 → 不关，并提示
+  // 2. 填过内容点遮罩 → 不关，也不弹提示
   geo = await openModal();
   await typeIntoInput(geo.input);
   check('输入后表单标记为已编辑', await evaluate(`!!document.querySelector('#modal-root #base-name').value`));
   await clickAt(geo.backdrop[0], geo.backdrop[1]);
   check('填过内容点遮罩 → 不关', await modalOpen());
-  check('填过内容点遮罩 → 给出提示', await evaluate(
-    `[...document.querySelectorAll('.toast-text')].some((e) => e.textContent.includes('表单已填写内容'))`,
+  check('填过内容点遮罩 → 不弹提示', await evaluate(
+    `![...document.querySelectorAll('.toast-text')].some((e) => e.textContent.includes('表单已填写'))`,
   ));
 
   // 3. 在输入框里按下、拖到弹窗外松手 → 不关（以前这里是主要误触路径）
@@ -179,6 +179,30 @@ async function main() {
 
   // 收尾：把输入留下的 toast 清掉
   await evaluate(`document.querySelectorAll('.toast').forEach((t) => t.remove())`);
+
+  // 7. 搜索弹窗：没有秒表 / 步骤说明，历史记录可显示与清空
+  await evaluate(`fetch('/api/bases', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '验收站点', url: 'https://example.com' }),
+  }).then((r) => r.status)`);
+  await send('Page.reload', { ignoreCache: true });
+  await sleep(1200);
+  await evaluate(`localStorage.setItem('anirss:search-history', JSON.stringify(['久留美', '芙莉莲']))`);
+  await evaluate(`location.hash = '#/subs'`);
+  await sleep(400);
+  await evaluate(`document.querySelector('#view [data-action="open-search"]').click()`);
+  await sleep(250);
+  check('搜索弹窗打开', await evaluate(`!!document.querySelector('#search-form')`));
+  check('搜索弹窗没有秒表/步骤说明', await evaluate(
+    `!document.querySelector('#modal-root .search-elapsed') && !document.querySelector('#modal-root .search-progress-steps')`,
+  ));
+  check('搜索历史显示 2 条', await evaluate(`document.querySelectorAll('#search-history .chip-btn').length === 2`));
+  await evaluate(`document.querySelector('#search-history [data-action="search-history-clear"]').click()`);
+  await sleep(150);
+  check('清除搜索历史', await evaluate(`document.querySelectorAll('#search-history .chip-btn').length === 0`));
+  await evaluate(`localStorage.removeItem('anirss:search-history')`);
+  await evaluate(`document.querySelector('#modal-root [data-action="close-modal"]').click()`);
+  await sleep(150);
 
   console.log('');
   for (const name of pass) console.log('✓ ' + name);
