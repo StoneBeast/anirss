@@ -1,0 +1,23 @@
+services:
+  anirss:
+    build: .
+    image: anirss:local
+    container_name: anirss
+    restart: unless-stopped
+    ports:
+      - "8777:8777"
+    environment:
+      TZ: Asia/Shanghai
+      ANIRSS_HOST: 0.0.0.0
+      ANIRSS_PORT: "8777"
+      ANIRSS_DATA: /data
+    volumes:
+      - ./data:/data
+      # 需要「补番硬链接 / 字幕入库」时，把 qBittorrent 的下载目录与硬链接目标目录
+      # 按宿主机完全相同的路径挂进来（qB 里填写的 savepath 也要是容器内路径），
+      # 且两者必须位于宿主机同一文件系统（硬链接不能跨分区）：
+      # - /mnt/media/downloads:/mnt/media/downloads
+      # - /mnt/media/library:/mnt/media/library
+    # 如宿主机 uid/gid 与镜像内的 1000:1000 不一致，取消下面一行并改成实际值，
+    # 同时确保 ./data 及其它挂载目录对该 uid 可读写：
+    # user: "1000:1000"
