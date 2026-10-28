@@ -54,6 +54,10 @@ const SEARCH_EPISODE_DEADLINE = 5000;
 const SEARCH_EPISODE_BUDGET = 8000;
 const SEARCH_HOME_DEADLINE = 7000;
 const SEARCH_RSS_DEADLINE = 5000;
+// 搜索页比番组主页重（上百 KB 的 HTML），给它的硬上限要宽松些
+const SEARCH_WORKS_DEADLINE = 12000;
+// 搜索结果等搜索页的额外耐心：超过就先按 RSS 的结果返回，页面回来后进缓存供下次用
+const SEARCH_WORKS_WAIT = 6000;
 // 一次搜索最长等待：超出就返回已经拿到的部分，不再空等
 const SEARCH_CORE_BUDGET = 12000;
 const SEARCH_BUDGET = 14000;
@@ -109,6 +113,22 @@ async function raceBudget(promise, deadlineAt, onTimeout) {
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** 等一个 promise，超时就用兜底值；不取消原任务（它完成后仍会写缓存，下次搜索直接用） */
+function withTimeout(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => done(fallback), Math.max(0, ms));
+    if (timer.unref) timer.unref();
+    promise.then((value) => { clearTimeout(timer); done(value); },
+      () => { clearTimeout(timer); done(fallback); });
+  });
 }
 
 function sortByNewest(list) {
@@ -1627,8 +1647,8 @@ class Engine {
     if (cached && nowMs() - cached.at < 5 * 60000) return cached.data;
     const res = await this.searchFetch(url, () => fetchBuffer(url, {
       timeout: 20000,
-      deadline: SEARCH_HOME_DEADLINE,
-      maxBytes: 8 * 1024 * 1024,
+      deadline: SEARCH_WORKS_DEADLINE,
+      maxBytes: 12 * 1024 * 1024,
       headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
       proxy: this.data.proxy,
     }), 'high');
@@ -1783,7 +1803,6 @@ class Engine {
     const worksTask = this.fetchSearchWorks(base.url, q).catch(() => []);
     const feed = await this.fetchSearchFeed(searchUrl);
     job.timings.feed = nowMs() - tFeed;
-    const works = await worksTask;
 
     const episodes = [];
     const seen = new Set();
@@ -1859,6 +1878,11 @@ class Engine {
         g.subgroups.set(d.subgroupId, s);
       }
     }
+
+    // 搜索页在单集处理期间继续跑；到这一步再收结果，最多再等几秒，
+    // 拿不到就先按 RSS 的结果返回（页面会进缓存，下次搜索直接用）
+    const worksWait = Math.max(0, Math.min(SEARCH_WORKS_WAIT, job.t0 + SEARCH_CORE_BUDGET - nowMs()));
+    const works = await withTimeout(worksTask, worksWait, []);
 
     // 把搜索页里的作品补进结果：早就完结、近期没有更新的作品不会出现在 RSS/Search 里，
     // 只靠单集反推会漏掉它们（例如搜「死神」时只剩当前在播的那一部）
