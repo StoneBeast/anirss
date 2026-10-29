@@ -826,6 +826,11 @@ async function main() {
     assert.ok(withOld.results.some((r) => r.bangumiId === '9999'), JSON.stringify(withOld.results.map((r) => r.bangumiId)));
     assert.strictEqual(withOld.timings.worksIncomplete, false, JSON.stringify(withOld.timings));
     assert.ok(worksHits > 0, '搜索页应真的被请求到');
+    // 只在搜索页出现的那条要能被前端认出来（避免显示「本次匹配 0 条」）
+    const worksOnlyHit = withOld.results.find((r) => r.bangumiId === '9999');
+    assert.strictEqual(worksOnlyHit.fromWorks, true, JSON.stringify(worksOnlyHit));
+    assert.strictEqual(worksOnlyHit.hitCount, 0, JSON.stringify(worksOnlyHit));
+    assert.strictEqual(withOld.results.find((r) => r.bangumiId === '4059').fromWorks, false);
     console.log('✓ 搜索页补齐：RSS 里没有的老番也能搜到');
 
     // RSS 为空、只有搜索页有结果：不能当成「没有匹配的番剧」

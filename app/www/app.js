@@ -2147,6 +2147,16 @@
     return parts.join(' · ');
   }
 
+  /** 「本次匹配」标签：只在搜索页里出现、RSS 无近期条目的结果不显示「0 条」 */
+  function matchChipHTML(g) {
+    const matched = Number(g.matched || g.hitCount || 0);
+    if (matched) return `<span class="chip accent">本次匹配 ${matched} 条</span>`;
+    if (g.fromWorks) {
+      return '<span class="chip muted" title="这条只出现在站点搜索页：RSS 搜索里没有它的近期条目，所以本次匹配为 0 条">仅搜索页收录</span>';
+    }
+    return '';
+  }
+
   /** 搜索等待中的骨架卡片，避免长时间只有一行小字 */
   function searchSkeletonHTML(count) {
     return `<div class="search-list search-skeleton">${Array.from({ length: count }, () => `
@@ -2193,7 +2203,7 @@
                 <span class="search-title">${esc(g.title || `番剧 ${g.bangumiId}`)}</span>
                 ${g.airWeekday ? `<span class="chip">${icon('clock')}${esc(g.airWeekday)}</span>` : ''}
                 ${g.episodeTotal ? `<span class="chip">全 ${g.episodeTotal} 话</span>` : (g.episodes ? `<span class="chip">全 ${esc(g.episodes)} 话</span>` : '')}
-                <span class="chip accent">本次匹配 ${g.matched || g.hitCount || 0} 条</span>
+                ${matchChipHTML(g)}
               </div>
               <div class="search-sub small faint">${esc(g.homeUrl || '')}</div>
               <div class="subgroup-list">

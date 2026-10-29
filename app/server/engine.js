@@ -1922,6 +1922,8 @@ class Engine {
         homeUrl: homeUrlFor(base.url, w.bangumiId),
         subgroups: new Map(),
         hitCount: 0,
+        // 只在搜索页里出现、RSS 里没有近期条目：前端据此不再显示「本次匹配 0 条」
+        fromWorks: true,
         order: index,
       });
     });
@@ -1987,6 +1989,7 @@ class Engine {
         bgmUrl: (home && home.bgmUrl) || '',
         matched: g.hitCount,
         hitCount: g.hitCount,
+        fromWorks: !!g.fromWorks,
         order: g.order || 0,
         subgroups: merged.slice(0, 40),
       };
