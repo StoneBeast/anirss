@@ -41,6 +41,16 @@ async function evaluate(expression) {
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
+/** 轮询等待页面条件成立（站点搜索要真的出网，固定 sleep 容易偶发失败） */
+async function waitFor(expression, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 10000);
+  while (Date.now() < deadline) {
+    if (await evaluate(expression)) return true;
+    await sleep(300);
+  }
+  return false;
+}
+
 function check(label, actual, expected) {
   checks++;
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
@@ -242,6 +252,36 @@ async function main() {
   await evaluate('history.back()');
   await sleep(1500);
   check('× 关抽屉后一次返回就离开页面', (await snapshot()).href, 'about:blank');
+
+  // 场景 I：搜索结果里选字幕组 → 订阅表单替换搜索弹窗（同一条占位记录），返回仍先关表单
+  await navigate('about:blank', 500);
+  await navigate(APP + '/', 3000);
+  await evaluate(`document.querySelector('#nav a[data-nav="subs"]').click()`);
+  await sleep(700);
+  const i0 = await snapshot();
+  await evaluate(`document.querySelector('[data-action="open-search"]').click()`);
+  await sleep(700);
+  await evaluate(`(() => { document.querySelector('#search-q').value = '药屋'; })()`);
+  await evaluate(`document.querySelector('#search-form button[type="submit"]').click()`);
+  check('搜索结果里有字幕组按钮', await waitFor(`document.querySelectorAll('.subgroup-chip').length > 0`, 15000), true);
+  await evaluate(`document.querySelector('.subgroup-chip').click()`);
+  await sleep(800);
+  check('选字幕组后打开订阅表单', await evaluate(`!!document.querySelector('#sub-form')`), true);
+  check('搜索弹窗已被替换掉', await evaluate(`!!document.querySelector('#search-form')`), false);
+  // 预填落在 #f-path（base 模式）或 #f-url（url 模式）都算成功
+  check('表单里预填了字幕组 RSS', await evaluate(`(() => {
+    const url = (document.querySelector('#f-url') || {}).value || '';
+    const path = (document.querySelector('#f-path') || {}).value || '';
+    return (url + path).includes('subgroupid=');
+  })()`), true);
+  check('选字幕组不额外压历史', await evaluate('history.length'), i0.length + 1);
+  await evaluate('history.back()');
+  await sleep(900);
+  check('返回先关掉订阅表单', await evaluate(`document.querySelectorAll('#modal-root > *').length`), 0);
+  check('关掉表单后仍留在追番页', (await snapshot()).hash, '#/subs');
+  await evaluate('history.back()');
+  await sleep(1500);
+  check('表单关掉后再返回才离开页面', (await snapshot()).href, 'about:blank');
 
   console.log(failures === 0 ? `\n全部通过（${checks} 项）` : `\n失败 ${failures} 项`);
   await fetch(CDP + '/json/close/' + created.id).catch(() => {});

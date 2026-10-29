@@ -2454,8 +2454,11 @@
     const subgroupId = el.dataset.subgroup || '';
     const title = el.dataset.title || '';
     if (!bangumiId || !subgroupId) return;
-    closeModal();
+    // 不丢占位记录：关搜索弹窗只清 DOM，表单弹窗复用同一条占位记录，
+    // 手机上按返回仍是先关表单，而不是直接退出
+    closeModal({ skipGuard: true });
     openSubModal(null, {
+      reuseGuard: true,
       prefill: {
         baseId,
         path: `RSS/Bangumi?bangumiId=${bangumiId}&subgroupid=${subgroupId}`,
@@ -3553,10 +3556,18 @@
     // 没有弹层：就是普通的页面返回，交给浏览器
   }
 
-  function openModal(html, type) {
+  function openModal(html, type, opts) {
     const root = $('#modal-root');
     if (!root) return;
-    if (!root.children.length) pushLayerGuard();
+    // 同一 tick 里「关旧弹窗、开新弹窗」的替换（如搜索结果选字幕组进表单）：
+    // 旧弹窗的占位记录还压在历史里，复用它，不再压新记录。
+    // 否则先 close 再 open 会触发一次排队的 history.back()，它的目标在调用瞬间
+    // 就锁定为路由条目，会把刚压的新占位记录一起跨过并截断，新弹窗就没了返回保护。
+    if (opts && opts.reuseGuard) {
+      if (layerGuards <= 0) pushLayerGuard();
+    } else if (!root.children.length) {
+      pushLayerGuard();
+    }
     S.modal = { type: type || 'modal' };
     S.modalEdited = false;
     S.modalOpenedAt = Date.now();
@@ -4048,7 +4059,7 @@
     S.lastResolveUrl = '';
     S.modalDirty = !!draft;
     clearTimeout(S.nameTimer);
-    openModal(subFormHTML(values, mode, !!sub), 'sub');
+    openModal(subFormHTML(values, mode, !!sub), 'sub', { reuseGuard: !!opts.reuseGuard });
     if (draft) {
       if (draft.subTemplate && draft.subTemplate.id) {
         const preset = d.paths.find((p) => p.id === draft.subTemplate.id);
