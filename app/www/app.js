@@ -437,6 +437,28 @@
     return Object.prototype.hasOwnProperty.call(ROUTES, raw) ? raw : 'overview';
   }
 
+  // 站内切页只改当前这条历史记录，不给 location.hash 赋值：
+  // 应用本身只有一层页面，切「追番 / 补番」不该在浏览器历史里堆栈。
+  // 否则手机上按返回会先退到上一个标签页，要连按几次才退出页面。
+  function goRoute(hash) {
+    const raw = String(hash == null ? '' : hash);
+    const target = raw.startsWith('#') ? raw : '#/' + (raw || 'overview');
+    if (location.hash === target) return;
+    history.replaceState(null, '', target);
+    onRoute();
+  }
+
+  function onRouteLinkClick(e) {
+    if (e.defaultPrevented || (e.button != null && e.button !== 0)) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const hit = e.target && e.target.nodeType === 1 ? e.target.closest('a[href^="#/"]') : null;
+    if (!hit || (hit.target && hit.target !== '_self')) return;
+    const raw = (hit.getAttribute('href') || '').replace(/^#\/?/, '');
+    if (!Object.prototype.hasOwnProperty.call(ROUTES, raw)) return;
+    e.preventDefault();
+    goRoute('#/' + raw);
+  }
+
   function onRoute() {
     const next = readRoute();
     if (next !== S.view) {
@@ -3124,7 +3146,7 @@
         openSubModal(null, { example: true });
         break;
       case 'open-connection':
-        location.hash = '#/connection';
+        goRoute('#/connection');
         break;
       case 'edit-sub':
         openSubModal(id);
@@ -4780,6 +4802,8 @@
       if (document.visibilityState === 'visible' && S.view === 'overview' && S.data) loadQbStatus();
     }, 30000);
     window.addEventListener('hashchange', onRoute);
+    // 导航栏、卡片里的「去设置」等站内链接统一走 replaceState
+    document.addEventListener('click', onRouteLinkClick);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         refresh({ soft: true });
