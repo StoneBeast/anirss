@@ -2,7 +2,8 @@
 
 /**
  * 浏览器返回栈检查：站内切页（总览 / 追番 / 补番 …）不应该往历史里压栈，
- * 手机上按一次返回就应该离开页面，而不是先退回上一个标签页。
+ * 手机上按一次返回就应该离开页面，而不是先退回上一个标签页；
+ * 弹窗 / 抽屉打开时则先关弹层，关掉之后再按返回才离开页面。
  *
  * 前提：Chrome 以 --remote-debugging-port=9222 运行，anirss 演示实例在 8777（同 dev/ui-actions.js）。
  * 运行：node dev/ui-history-check.js
@@ -62,10 +63,10 @@ async function navigate(url, waitMs) {
 }
 
 async function main() {
-  const targets = await (await fetch(CDP + '/json/list')).json();
-  const page = targets.find((t) => t.type === 'page');
-  if (!page) throw new Error('没有可用的页面目标，先打开 Chrome');
-  ws = new WebSocket(page.webSocketDebuggerUrl);
+  // 用独立的新标签页跑：历史记录从 1 开始，不受上一次运行残留的前进/后退记录影响
+  const created = await (await fetch(CDP + '/json/new?about:blank', { method: 'PUT' })).json();
+  if (!created || !created.webSocketDebuggerUrl) throw new Error('新建标签页失败：' + JSON.stringify(created));
+  ws = new WebSocket(created.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
@@ -139,7 +140,111 @@ async function main() {
   check('内容链接切换到下载记录', c1.hash, '#/downloads');
   check('内容链接不压历史', c1.length, c0.length);
 
+  // 场景 D：打开弹窗后按返回，先关弹窗而不是离开页面
+  await navigate('about:blank', 500);
+  await navigate(APP + '/', 3000);
+  await evaluate(`document.querySelector('#nav a[data-nav="subs"]').click()`);
+  await sleep(700);
+  const d0 = await snapshot();
+  await evaluate(`document.querySelector('[data-action="open-sub"]').click()`);
+  await sleep(700);
+  const dOpen = await evaluate(`document.querySelectorAll('#modal-root > *').length`);
+  check('点「新增追番」打开弹窗', dOpen > 0, true);
+  check('打开弹窗压一条历史', await evaluate('history.length'), d0.length + 1);
+
+  await evaluate('history.back()');
+  await sleep(900);
+  check('返回先关掉弹窗', await evaluate(`document.querySelectorAll('#modal-root > *').length`), 0);
+  check('关弹窗后仍留在追番页', (await snapshot()).hash, '#/subs');
+
+  await evaluate('history.back()');
+  await sleep(1500);
+  check('弹窗关掉后再返回才离开页面', (await snapshot()).href, 'about:blank');
+
+  // 场景 E：用 × 关掉弹窗，返回一次就离开页面（不会留下一次空返回）
+  await navigate('about:blank', 500);
+  await navigate(APP + '/', 3000);
+  await evaluate(`document.querySelector('#nav a[data-nav="subs"]').click()`);
+  await sleep(700);
+  const e0 = await snapshot();
+  await evaluate(`document.querySelector('[data-action="open-sub"]').click()`);
+  await sleep(700);
+  await evaluate(`document.querySelector('#modal-root [data-action="close-modal"]').click()`);
+  await sleep(800);
+  check('× 能关掉弹窗', await evaluate(`document.querySelectorAll('#modal-root > *').length`), 0);
+  check('× 关窗后历史长度不变', await evaluate('history.length'), e0.length + 1);
+
+  await evaluate('history.back()');
+  await sleep(1500);
+  check('× 关窗后一次返回就离开页面', (await snapshot()).href, 'about:blank');
+
+  // 场景 F：预览抽屉打开时，返回先关抽屉
+  await navigate('about:blank', 500);
+  await navigate(APP + '/', 3000);
+  await evaluate(`document.querySelector('#nav a[data-nav="subs"]').click()`);
+  await sleep(900);
+  const f0 = await snapshot();
+  const fOpened = await evaluate(`(() => {
+    const row = document.querySelector('[data-action="preview-sub"]');
+    if (!row) return false;
+    row.click();
+    return true;
+  })()`);
+  await sleep(900);
+  check('追番列表里能打开预览抽屉', fOpened, true);
+  check('抽屉已打开', await evaluate(`document.querySelectorAll('#drawer-root > *').length`) > 0, true);
+  check('打开抽屉压一条历史', await evaluate('history.length'), f0.length + 1);
+
+  await evaluate('history.back()');
+  await sleep(900);
+  check('返回先关掉抽屉', await evaluate(`document.querySelectorAll('#drawer-root > *').length`), 0);
+  check('关抽屉后仍留在追番页', (await snapshot()).hash, '#/subs');
+
+  await evaluate('history.back()');
+  await sleep(1500);
+  check('抽屉关掉后再返回才离开页面', (await snapshot()).href, 'about:blank');
+
+  // 场景 G：确认类弹窗（删除追番）按返回等于取消，不会真删
+  await navigate('about:blank', 500);
+  await navigate(APP + '/', 3000);
+  await evaluate(`document.querySelector('#nav a[data-nav="subs"]').click()`);
+  await sleep(900);
+  const g0 = await snapshot();
+  const beforeRows = await evaluate(`document.querySelectorAll('[data-action="delete-sub"]').length`);
+  await evaluate(`document.querySelector('[data-action="delete-sub"]').click()`);
+  await sleep(700);
+  check('删除按钮弹出确认框', await evaluate(`document.querySelectorAll('#modal-root > *').length`) > 0, true);
+  check('确认框也压一条历史', await evaluate('history.length'), g0.length + 1);
+  await evaluate('history.back()');
+  await sleep(900);
+  check('返回关掉确认框', await evaluate(`document.querySelectorAll('#modal-root > *').length`), 0);
+  check('取消后追番数量不变', await evaluate(`document.querySelectorAll('[data-action="delete-sub"]').length`), beforeRows);
+  check('取消后删除按钮没有卡在忙碌态', await evaluate(`(() => {
+    const el = document.querySelector('[data-action="delete-sub"]');
+    return !!el && !el.disabled && !el.classList.contains('is-busy');
+  })()`), true);
+  await evaluate('history.back()');
+  await sleep(1500);
+  check('确认框关掉后再返回才离开页面', (await snapshot()).href, 'about:blank');
+
+  // 场景 H：抽屉用 × 关掉后，一次返回就离开页面
+  await navigate('about:blank', 500);
+  await navigate(APP + '/', 3000);
+  await evaluate(`document.querySelector('#nav a[data-nav="subs"]').click()`);
+  await sleep(900);
+  const h0 = await snapshot();
+  await evaluate(`document.querySelector('[data-action="preview-sub"]').click()`);
+  await sleep(900);
+  await evaluate(`document.querySelector('#drawer-root [data-action="close-drawer"]').click()`);
+  await sleep(800);
+  check('× 能关掉抽屉', await evaluate(`document.querySelectorAll('#drawer-root > *').length`), 0);
+  check('× 关抽屉后历史长度不变', await evaluate('history.length'), h0.length + 1);
+  await evaluate('history.back()');
+  await sleep(1500);
+  check('× 关抽屉后一次返回就离开页面', (await snapshot()).href, 'about:blank');
+
   console.log(failures === 0 ? `\n全部通过（${checks} 项）` : `\n失败 ${failures} 项`);
+  await fetch(CDP + '/json/close/' + created.id).catch(() => {});
   process.exit(failures === 0 ? 0 : 1);
 }
 

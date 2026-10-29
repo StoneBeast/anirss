@@ -444,7 +444,25 @@
     const raw = String(hash == null ? '' : hash);
     const target = raw.startsWith('#') ? raw : '#/' + (raw || 'overview');
     if (location.hash === target) return;
-    history.replaceState(null, '', target);
+    // 弹层还开着：先收掉占位记录，落回路由记录后再切页
+    if (layerGuards > 0) {
+      pendingRoute = target;
+      collapseLayerGuards(layerGuards);
+      return;
+    }
+    history.replaceState(history.state, '', target);
+    onRoute();
+  }
+
+  function onHashChange() {
+    if (suppressRoute) return;
+    // 浏览器把新 hash 压成了一条新记录（直接改地址 / 外部跳转），占位记录在它下面：
+    // 连同这条新记录一起退掉，再落回目标路由
+    if (layerGuards > 0) {
+      pendingRoute = location.hash || '#/overview';
+      if (!collapseLayerGuards(layerGuards + 1)) onRoute();
+      return;
+    }
     onRoute();
   }
 
@@ -485,6 +503,7 @@
       S.subModalDraft = null;
       openSubModal(draft.id || undefined, { draft });
     }
+    lastHash = location.hash;
   }
 
   function renderChrome() {
@@ -3450,9 +3469,94 @@
     document.body.classList.toggle('locked', locked);
   }
 
+  /* 弹层的历史占位记录。
+     打开弹层时压一条记录，手机上按返回先关掉弹层而不是离开页面；关闭弹层
+     （× / 取消 / 遮罩 / Esc / 提交成功）时把这条记录退掉，避免多出一次空返回。
+     弹层最多各一层（抽屉 + 弹窗），记录数按打开次数累加，嵌套时逐层退。 */
+  let layerGuards = 0;       // 历史里还压着的占位记录数
+  let layerBackPending = 0;  // 正在由我们自己退掉的占位记录数
+  let collapsing = false;    // 切页时批量收占位记录中，忽略中途的返回事件
+  let pendingRoute = null;   // 收完占位记录后要落到哪个路由
+  let suppressRoute = false; // 批量收记录期间不处理 hashchange
+  let lastHash = location.hash; // 上一次渲染完成时的 hash
+
+  function guardDepthOf(state) {
+    return state && typeof state.anirssLayer === 'number' ? state.anirssLayer : 0;
+  }
+
+  function pushLayerGuard() {
+    history.pushState({ ...(history.state || {}), anirssLayer: guardDepthOf(history.state) + 1 }, '', location.href);
+    layerGuards += 1;
+  }
+
+  function dropLayerGuard() {
+    if (layerGuards <= 0) return;
+    layerBackPending += 1;
+    history.back();
+  }
+
+  // 切页时弹层还开着：先把占位记录一起收掉，再落到新路由。
+  // 否则退回占位记录会带回旧 hash，把刚切走的页面又拉回来。
+  function collapseLayerGuards(steps) {
+    if (steps <= 0) return false;
+    collapsing = true;
+    suppressRoute = true;
+    layerGuards = 0;
+    history.go(-steps);
+    return true;
+  }
+
+  function finishCollapse() {
+    collapsing = false;
+    suppressRoute = false;
+    const target = pendingRoute;
+    pendingRoute = null;
+    if (!target) return;
+    history.replaceState(null, '', target);
+    onRoute();
+  }
+
+  function onPopState() {
+    if (collapsing) {
+      // 还在占位记录上就继续退，直到落回真正的路由记录
+      const depth = guardDepthOf(history.state);
+      if (depth > 0) { history.go(-depth); return; }
+      finishCollapse();
+      return;
+    }
+    // 自己关弹层时退的那条记录，不能拿来再关一次
+    if (layerBackPending > 0) {
+      layerBackPending -= 1;
+      layerGuards = Math.max(0, layerGuards - 1);
+      return;
+    }
+    // 直接改 hash（外部跳转、手输地址）也会触发 popstate，路由交给 hashchange 处理；
+    // 只有 hash 没变的返回才是「退到弹层之前的状态」，这时才关弹层
+    if (location.hash !== lastHash) return;
+    const modalRoot = $('#modal-root');
+    if (modalRoot && modalRoot.children.length) {
+      layerGuards = Math.max(0, layerGuards - 1);
+      // 确认框 / 输入框：按返回等于取消，要把挂起的 Promise 结掉，
+      // 否则调用方一直等着，按钮会停在忙碌态
+      const confirm = S.confirmResolve;
+      S.confirmResolve = null;
+      closeModal({ skipGuard: true });
+      if (confirm) confirm(false);
+      return;
+    }
+    const drawerRoot = $('#drawer-root');
+    if (drawerRoot && drawerRoot.children.length) {
+      layerGuards = Math.max(0, layerGuards - 1);
+      closeDrawer({ skipGuard: true });
+      return;
+    }
+    // 没有弹层：就是普通的页面返回，交给浏览器
+  }
+
   function openModal(html, type) {
     const root = $('#modal-root');
     if (!root) return;
+    if (!root.children.length) pushLayerGuard();
     S.modal = { type: type || 'modal' };
     S.modalEdited = false;
     S.modalOpenedAt = Date.now();
@@ -3464,8 +3568,9 @@
     }, 40);
   }
 
-  function closeModal() {
+  function closeModal(opts) {
     const root = $('#modal-root');
+    const wasOpen = !!(root && root.children.length);
     if (root) root.innerHTML = '';
     S.modal = null;
     S.modalEdited = false;
@@ -3476,13 +3581,16 @@
     S.searchLoading = false;
     S.searchPending = false;
     syncLock();
+    if (wasOpen && !(opts && opts.skipGuard)) dropLayerGuard();
   }
 
-  function closeDrawer() {
+  function closeDrawer(opts) {
     const root = $('#drawer-root');
+    const wasOpen = !!(root && root.children.length);
     if (root) root.innerHTML = '';
     S.drawer = null;
     syncLock();
+    if (wasOpen && !(opts && opts.skipGuard)) dropLayerGuard();
   }
 
   function closeLayers() {
@@ -3501,6 +3609,7 @@
       S.modalOpenedAt = Date.now();
       const root = $('#modal-root');
       if (!root) return resolve(false);
+      if (!root.children.length) pushLayerGuard();
       root.innerHTML = `
         <div class="modal-backdrop" data-backdrop="modal">
           <div class="modal sm" role="dialog" aria-modal="true">
@@ -3537,6 +3646,7 @@
       S.modalOpenedAt = Date.now();
       const root = $('#modal-root');
       if (!root) return resolve(false);
+      if (!root.children.length) pushLayerGuard();
       root.innerHTML = `
         <div class="modal-backdrop" data-backdrop="modal">
           <div class="modal sm" role="dialog" aria-modal="true">
@@ -3578,6 +3688,7 @@
       S.confirmResolve = resolve;
       const root = $('#modal-root');
       if (!root) return resolve(false);
+      if (!root.children.length) pushLayerGuard();
       const fields = Array.isArray(opts.fields) ? opts.fields : [];
       const readValues = (root) => {
         const values = {};
@@ -4328,6 +4439,8 @@
   function openDrawer(id) {
     const sub = S.data.subs.find((s) => s.id === id);
     if (!sub) return;
+    const root = $('#drawer-root');
+    if (root && !root.children.length) pushLayerGuard();
     S.drawer = { id, sub, loading: true, data: null, error: '' };
     renderDrawer();
     loadDrawer();
@@ -4790,6 +4903,7 @@
     tickClock();
     setInterval(tickClock, 1000);
     if (!location.hash) history.replaceState(null, '', '#/overview');
+    lastHash = location.hash;
     S.view = readRoute();
     renderChrome();
     renderView();
@@ -4801,7 +4915,9 @@
     setInterval(() => {
       if (document.visibilityState === 'visible' && S.view === 'overview' && S.data) loadQbStatus();
     }, 30000);
-    window.addEventListener('hashchange', onRoute);
+    window.addEventListener('hashchange', onHashChange);
+    // 弹层打开时，返回键先关弹层（见 onPopState），没有弹层才离开页面
+    window.addEventListener('popstate', onPopState);
     // 导航栏、卡片里的「去设置」等站内链接统一走 replaceState
     document.addEventListener('click', onRouteLinkClick);
     document.addEventListener('visibilitychange', () => {
