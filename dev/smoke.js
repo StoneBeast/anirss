@@ -40,6 +40,10 @@ const qbTorrents = new Map();
 const qbFiles = new Map();
 let rssHits = 0;
 let proxyHits = 0;
+// 站点搜索页（/Home/Search）的行为开关：ok 正常返回 / fail 直接 500 / slow 延迟 worksDelay 毫秒
+let worksMode = 'ok';
+let worksDelay = 0;
+let worksHits = 0;
 
 function torrentFor(id) {
   const name = `demo-${id}`;
@@ -247,6 +251,37 @@ function searchXml() {  const items = SEARCH_EPISODES.map((e) => `
 </channel></rss>`;
 }
 
+function emptySearchXml() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>Mikan Project - 搜索结果</title>
+  <link>http://127.0.0.1:${RSS_PORT}/</link>
+</channel></rss>`;
+}
+
+/**
+ * 站点搜索页（/Home/Search）。默认只列出 4059；老番/慢/恢复 这几个词会多出一部只存在于
+ * 搜索页的「老番」9999；空番 则只有 9999（连 RSS 都是空的），用来验证「RSS 里没有、
+ * 搜索页里有」的补齐逻辑。
+ */
+function worksPage(q) {
+  const items = [];
+  if (q !== '空番') {
+    items.push('<div class="list"><a href="/Home/Bangumi/4059"><div class="an-text" title="FX&#x6218;&#x58EB;&#x4E45;&#x7559;&#x7F8E;">FX战士久留美</div></a></div>');
+  }
+  if (q !== '久留美') {
+    items.push('<div class="list"><a href="/Home/Bangumi/9999"><div class="an-text" title="老番：死神（已完结）">老番：死神（已完结）</div></a></div>');
+  }
+  return `<!doctype html><html><head><title>Mikan Project - 搜索</title></head><body>${items.join('')}</body></html>`;
+}
+
+function oldHomePage() {
+  return `<!doctype html><html><head><title>Mikan Project - 老番</title></head><body>
+    <p class="bangumi-title">老番：死神（已完结）</p>
+    <p class="bangumi-info">总集数：366</p>
+  </body></html>`;
+}
+
 async function startRssMock() {
   return startServer((req, res) => {
     const u = new URL(req.url, `http://127.0.0.1:${RSS_PORT}`);
@@ -259,7 +294,24 @@ async function startRssMock() {
       return text(res, rssXml(), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
     }
     if (u.pathname === '/RSS/Search') {
-      return text(res, searchXml(), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
+      // 「空番」模拟 RSS 里一条近期更新都没有、结果只在搜索页里的老作品
+      const q = u.searchParams.get('searchStr') || '';
+      return text(res, q === '空番' ? emptySearchXml() : searchXml(), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
+    }
+    if (u.pathname === '/Home/Search') {
+      worksHits++;
+      const q = u.searchParams.get('searchStr') || '';
+      if (worksMode === 'fail') return text(res, 'boom', 500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      const body = worksPage(q);
+      const send = () => {
+        if (res.destroyed || res.writableEnded) return;
+        text(res, body, 200, { 'Content-Type': 'text/html; charset=utf-8' });
+      };
+      if (worksMode === 'slow') return setTimeout(send, worksDelay);
+      return send();
+    }
+    if (u.pathname === '/Home/Bangumi/9999') {
+      return text(res, oldHomePage(), 200, { 'Content-Type': 'text/html; charset=utf-8' });
     }
     if (/^\/Home\/Episode\/[0-9a-f]{40}$/i.test(u.pathname)) {
       const hash = u.pathname.split('/').pop();
@@ -768,6 +820,49 @@ async function main() {
     assert.strictEqual(enrichedSubA.countSource, 'rss', 'full 阶段应由字幕组 RSS 校正');
     assert.strictEqual(enrichedSubA.sizeMax, 302 * 1024 * 1024);
     console.log('✓ 两段式搜索：core 先出主页大小，full 再补 RSS 精确体积');
+
+    // 搜索页（/Home/Search）补齐：只在搜索页里出现的老作品也要能搜到
+    const withOld = await api(`/api/search?q=${encodeURIComponent('老番')}&baseId=${mockBaseId}&phase=core`);
+    assert.ok(withOld.results.some((r) => r.bangumiId === '9999'), JSON.stringify(withOld.results.map((r) => r.bangumiId)));
+    assert.strictEqual(withOld.timings.worksIncomplete, false, JSON.stringify(withOld.timings));
+    assert.ok(worksHits > 0, '搜索页应真的被请求到');
+    // 只在搜索页出现的那条要能被前端认出来（避免显示「本次匹配 0 条」）
+    const worksOnlyHit = withOld.results.find((r) => r.bangumiId === '9999');
+    assert.strictEqual(worksOnlyHit.fromWorks, true, JSON.stringify(worksOnlyHit));
+    assert.strictEqual(worksOnlyHit.hitCount, 0, JSON.stringify(worksOnlyHit));
+    assert.strictEqual(withOld.results.find((r) => r.bangumiId === '4059').fromWorks, false);
+    console.log('✓ 搜索页补齐：RSS 里没有的老番也能搜到');
+
+    // RSS 为空、只有搜索页有结果：不能当成「没有匹配的番剧」
+    // （RSS 为空时如果提前引用还没赋值的 works，会直接 ReferenceError → 500）
+    const worksOnly = await api(`/api/search?q=${encodeURIComponent('空番')}&baseId=${mockBaseId}&phase=core`);
+    assert.deepStrictEqual(worksOnly.results.map((r) => r.bangumiId), ['9999']);
+    console.log('✓ RSS 为空时按搜索页返回结果（不再误判为没搜到）');
+
+    // 搜索页比旧的 7 秒上限慢：仍要等齐再返回，别退回只剩 RSS 的「一部」
+    worksMode = 'slow';
+    worksDelay = 7500;
+    const slowStart = Date.now();
+    const slow = await api(`/api/search?q=${encodeURIComponent('慢')}&baseId=${mockBaseId}&phase=core`);
+    const slowMs = Date.now() - slowStart;
+    worksMode = 'ok';
+    worksDelay = 0;
+    assert.ok(slow.results.some((r) => r.bangumiId === '9999'), JSON.stringify(slow.results.map((r) => r.bangumiId)));
+    assert.strictEqual(slow.timings.worksIncomplete, false, JSON.stringify(slow.timings));
+    assert.ok(slowMs >= 7000 && slowMs < 12000, `应在 7.5s 左右返回，实际 ${slowMs}ms`);
+    console.log(`✓ 搜索页慢（7.5s）也会等齐再返回：${slowMs}ms`);
+
+    // 搜索页取不到：先按 RSS 兜底、标记未完成，并把这次 job 摘掉，重搜能补全
+    worksMode = 'fail';
+    const failedQuery = `q=${encodeURIComponent('恢复')}&baseId=${mockBaseId}&limit=12`;
+    const failedCore = await api(`/api/search?${failedQuery}&phase=core`);
+    assert.strictEqual(failedCore.timings.worksIncomplete, true, JSON.stringify(failedCore.timings));
+    assert.deepStrictEqual(failedCore.results.map((r) => r.bangumiId), ['4059']);
+    await api(`/api/search?${failedQuery}&phase=full`); // full 收尾时把半成品从 job 缓存里摘掉
+    worksMode = 'ok';
+    const retriedSearch = await api(`/api/search?${failedQuery}&phase=core`);
+    assert.ok(retriedSearch.results.some((r) => r.bangumiId === '9999'), '重搜应补全老番');
+    console.log('✓ 搜索页失败时按 RSS 兜底，重搜可补全');
 
     // 集数识别工具
     const guessed = await api('/api/guess-episode', {

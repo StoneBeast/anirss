@@ -54,6 +54,9 @@ const SEARCH_EPISODE_DEADLINE = 5000;
 const SEARCH_EPISODE_BUDGET = 8000;
 const SEARCH_HOME_DEADLINE = 7000;
 const SEARCH_RSS_DEADLINE = 5000;
+// 搜索页（/Home/Search）比番组主页重得多：它要列出站点上的全部作品，
+// 沿用主页的 7 秒会经常来不及，超时后只剩 RSS 里当前在播的那几部。
+const SEARCH_WORKS_DEADLINE = 12000;
 // 一次搜索最长等待：超出就返回已经拿到的部分，不再空等
 const SEARCH_CORE_BUDGET = 12000;
 const SEARCH_BUDGET = 14000;
@@ -111,6 +114,22 @@ async function raceBudget(promise, deadlineAt, onTimeout) {
   }
 }
 
+/** 等一个 promise，超时就用兜底值；不取消原任务（它完成后仍会写缓存，下次搜索直接用） */
+function withTimeout(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => done(fallback), Math.max(0, ms));
+    if (timer.unref) timer.unref();
+    promise.then((value) => { clearTimeout(timer); done(value); },
+      () => { clearTimeout(timer); done(fallback); });
+  });
+}
+
 function sortByNewest(list) {
   return list.slice().sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
 }
@@ -157,6 +176,7 @@ class Engine {
     this.searchJobs = new Map();
     this.searchFeedCache = new Map();
     this.searchWorksCache = new Map();
+    this.worksPending = new Map();
     this.episodePending = new Map();
     this.homePending = new Map();
     this.subgroupPending = new Map();
@@ -1625,17 +1645,20 @@ class Engine {
     const url = `${String(baseUrl).replace(/\/+$/, '')}/Home/Search?searchStr=${encodeURIComponent(q)}`;
     const cached = this.searchWorksCache.get(url);
     if (cached && nowMs() - cached.at < 5 * 60000) return cached.data;
-    const res = await this.searchFetch(url, () => fetchBuffer(url, {
-      timeout: 20000,
-      deadline: SEARCH_HOME_DEADLINE,
-      maxBytes: 8 * 1024 * 1024,
-      headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
-      proxy: this.data.proxy,
-    }), 'high');
-    const data = parseMikanSearch(res.buffer.toString('utf8'), res.url || baseUrl);
-    this.searchWorksCache.set(url, { at: nowMs(), data });
-    if (this.searchWorksCache.size > 60) this.searchWorksCache.delete(this.searchWorksCache.keys().next().value);
-    return data;
+    // core / full 或两个用户搜同一个词时只发一次请求（搜索页很重，重复抓取会拖慢站点）
+    return this.dedupe(this.worksPending, url, async () => {
+      const res = await this.searchFetch(url, () => fetchBuffer(url, {
+        timeout: 20000,
+        deadline: SEARCH_WORKS_DEADLINE,
+        maxBytes: 8 * 1024 * 1024,
+        headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
+        proxy: this.data.proxy,
+      }), 'high');
+      const data = parseMikanSearch(res.buffer.toString('utf8'), res.url || baseUrl);
+      this.searchWorksCache.set(url, { at: nowMs(), data });
+      if (this.searchWorksCache.size > 60) this.searchWorksCache.delete(this.searchWorksCache.keys().next().value);
+      return data;
+    });
   }
 
   /** 站点搜索 RSS：core / full 两次请求共用同一份结果；快速失败时重试一次 */
@@ -1753,6 +1776,11 @@ class Engine {
     // 超时只当作「这次先这样」：标记未完成，下一次搜索会补上缺的那几个字幕组
     job.enriched = !job.timings.rssPartial;
     job.at = nowMs(); // 完整结果的缓存有效期从这里算
+    // 搜索页那次被放弃了的话，不要把这半份结果缓存 5 分钟：
+    // 让下一次同词搜索重新走一遍 core（页面多半已进 works 缓存，重搜会立刻补全）。
+    if (job.timings.worksIncomplete && this.searchJobs.get(job.key) === job) {
+      this.searchJobs.delete(job.key);
+    }
     const suffix = job.timings.rssPartial ? '（部分字幕组超时，先返回主页大小）' : '';
     this.log('info', `搜索「${job.query}」体积统计：${job.timings.rss}ms${suffix}`);
   }
@@ -1779,11 +1807,12 @@ class Engine {
     const tFeed = nowMs();
     const searchUrl = `${String(base.url).replace(/\/+$/, '')}/RSS/Search?searchStr=${encodeURIComponent(q)}`;
     // 一边拿「最近有更新的单集」，一边拿「这次一共搜到几部作品」：
-    // 后者是搜索页，老作品在里面，但 RSS 里没有
-    const worksTask = this.fetchSearchWorks(base.url, q).catch(() => []);
+    // 后者是搜索页，老作品在里面，但 RSS 里没有。
+    // 提前挂一个 catch：core 若在收到 works 之前就返回，残留的 rejection 也不会冒出来。
+    const worksTask = this.fetchSearchWorks(base.url, q);
+    worksTask.catch(() => {});
     const feed = await this.fetchSearchFeed(searchUrl);
     job.timings.feed = nowMs() - tFeed;
-    const works = await worksTask;
 
     const episodes = [];
     const seen = new Set();
@@ -1798,7 +1827,8 @@ class Engine {
       episodes.push({ hash, title: String(it.title || ''), torrentUrl: enclosure });
       if (episodes.length >= limit) break;
     }
-    if (!episodes.length && !works.length) throw httpError(404, `没有找到与「${q}」匹配的番剧`, 'SEARCH_EMPTY');
+    // 注意：RSS 为空不代表「没搜到」——老作品只在搜索页里，
+    // 要等下面合并完搜索页的结果再判断（见 !groups.size 那段）。
     job.timings.episodeCount = episodes.length;
 
     // 单集页只需要番组 id：拿到就立刻并行拉主页，不再等所有单集页结束
@@ -1860,6 +1890,21 @@ class Engine {
       }
     }
 
+    // 搜索页在单集处理期间继续跑，到这里再收结果：最多等到它自己的 deadline，
+    // 并且不超过「一次搜索」的整体预算。拿不到就先按 RSS 的结果返回；
+    // 页面晚到会进缓存，下一次搜索直接用（这次的结果也不会被当作已完成缓存）。
+    const worksDeadlineAt = Math.min(job.t0 + SEARCH_WORKS_DEADLINE, job.t0 + SEARCH_CORE_BUDGET);
+    const worksWait = Math.max(0, worksDeadlineAt - nowMs());
+    const tWorks = nowMs();
+    const worksGot = await withTimeout(worksTask, worksWait, null);
+    job.timings.works = nowMs() - tWorks;
+    job.timings.worksIncomplete = worksGot === null;
+    const works = worksGot || [];
+    if (job.timings.worksIncomplete) {
+      this.log('warn', `搜索「${q}」：搜索页没能返回（超时或失败），`
+        + '本次先按 RSS 结果返回（页面晚到会进缓存，重搜可补全）');
+    }
+
     // 把搜索页里的作品补进结果：早就完结、近期没有更新的作品不会出现在 RSS/Search 里，
     // 只靠单集反推会漏掉它们（例如搜「死神」时只剩当前在播的那一部）
     works.slice(0, 24).forEach((w, index) => {
@@ -1877,6 +1922,8 @@ class Engine {
         homeUrl: homeUrlFor(base.url, w.bangumiId),
         subgroups: new Map(),
         hitCount: 0,
+        // 只在搜索页里出现、RSS 里没有近期条目：前端据此不再显示「本次匹配 0 条」
+        fromWorks: true,
         order: index,
       });
     });
@@ -1942,6 +1989,7 @@ class Engine {
         bgmUrl: (home && home.bgmUrl) || '',
         matched: g.hitCount,
         hitCount: g.hitCount,
+        fromWorks: !!g.fromWorks,
         order: g.order || 0,
         subgroups: merged.slice(0, 40),
       };
@@ -1962,8 +2010,9 @@ class Engine {
     };
     job.timings.core = nowMs() - job.t0;
     const t = job.timings;
+    const worksNote = t.worksIncomplete ? '搜索页未取到，按 RSS 结果返回' : `搜索页 ${works.length} 部`;
     this.log('info', `搜索「${q}」：${results.length} 部番剧 / ${episodes.length} 条单集`
-      + `（搜索页 ${works.length} 部，feed ${t.feed}ms / 单集 ${t.episodes}ms / 主页等待 ${t.homeWait}ms，共 ${t.core}ms）`);
+      + `（${worksNote}，feed ${t.feed}ms / 单集 ${t.episodes}ms / 主页等待 ${t.homeWait}ms / 搜索页等待 ${t.works}ms，共 ${t.core}ms）`);
     return job.data;
   }
 
