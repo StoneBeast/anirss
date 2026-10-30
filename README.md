@@ -7,6 +7,8 @@
 ![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-6f42c1)
 ![license](https://img.shields.io/badge/license-MIT-blue)
+[![CI](https://github.com/StoneBeast/anirss/actions/workflows/ci.yml/badge.svg)](https://github.com/StoneBeast/anirss/actions/workflows/ci.yml)
+[![Release](https://github.com/StoneBeast/anirss/actions/workflows/release.yml/badge.svg)](https://github.com/StoneBeast/anirss/actions/workflows/release.yml)
 
 默认浅色主题，可切换深色；可独立运行，也可打包成 fnOS（飞牛）应用，在浏览器里用独立端口打开。
 
@@ -30,7 +32,7 @@
 ### 方式一：fnOS（飞牛）应用
 
 1. 在 fnOS 应用中心开启「手动安装」。
-2. 安装 `anirss-1.13.2.fpk`（依赖 `nodejs_v24`，应用中心会自动处理）。
+2. 安装 `anirss-1.13.2.fpk`（依赖 `nodejs_v24`，应用中心会自动处理）。发布包在 [Releases](https://github.com/StoneBeast/anirss/releases) 里，由 GitHub Actions 从 tag 自动构建，同页附 `SHA256SUMS`。
 3. 点击桌面上的「AniRSS 追番台」，系统浏览器会打开 `http://<NAS-IP>:18181/`。
 
 数据目录是 `$TRIM_PKGVAR`（通常在 `/vol1/@appdata/anirss/`）；卸载默认保留数据。
