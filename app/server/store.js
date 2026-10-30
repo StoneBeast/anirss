@@ -2,9 +2,31 @@
 
 const fs = require('fs');
 const path = require('path');
-const { APP_VERSION, uid, nowMs, deepMerge } = require('./util');
+const { APP_VERSION, uid, nowMs, deepMerge, composeUrl, KEEP_CUSTOM_BASES } = require('./util');
 const { defaultProxy, normalizeProxy } = require('./proxy');
 const { DEFAULT_EXTENSIONS, DEFAULT_SUB_EXTENSIONS, DEFAULT_EXCLUDE_DIRS, DEFAULT_EXCLUDE_TAGS } = require('./hardlink');
+
+// 内置站点：当前所有功能都围绕蜜柑计划展开，暂不支持自定义站点基础地址，
+// 软件直接内置这两个站点（「站点与路径」里只读展示，接口层禁止增删改）。
+function builtinBases(ts) {
+  return [
+    { id: 'b_mikan', name: '蜜柑计划', url: 'https://mikanime.tv', note: '内置站点 · 默认', createdAt: ts },
+    { id: 'b_mikan_overseas', name: '蜜柑计划(境外)', url: 'https://mikanani.me', note: '内置站点 · 境外线路', createdAt: ts },
+  ];
+}
+
+/** 内置站点里 URL 主机名对应的 id（用于把旧站点迁移到内置站点） */
+function builtinBaseIdForHost(host) {
+  return String(host || '').toLowerCase() === 'mikanani.me' ? 'b_mikan_overseas' : 'b_mikan';
+}
+
+function hostOfUrl(url) {
+  try {
+    return new URL(String(url || '')).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
 
 function defaultData() {
   const ts = nowMs();
@@ -34,15 +56,7 @@ function defaultData() {
       renamePattern: '${name} - ${episode2}',
       defaultDest: '',
     },
-    bases: [
-      {
-        id: uid('b_'),
-        name: 'Mikan',
-        url: 'https://mikanime.tv',
-        note: '蜜柑计划 · 默认站点，可编辑或删除',
-        createdAt: ts,
-      },
-    ],
+    bases: builtinBases(ts),
     paths: [],
     subs: [],
     extras: [],
@@ -87,9 +101,6 @@ class Store {
     // 以默认结构补齐缺失字段；数组（bases/paths/subs/...）以文件内容为准
     const merged = deepMerge(base, this.data);
     merged.appVersion = APP_VERSION;
-    // 默认站点只在配置文件完全没有 bases 字段时给出，避免用户删空后又被塞回来
-    if (!Array.isArray(this.data.bases)) merged.bases = base.bases;
-    else merged.bases = this.data.bases;
     merged.paths = Array.isArray(this.data.paths) ? this.data.paths : [];
     merged.subs = Array.isArray(this.data.subs) ? this.data.subs : [];
     merged.extras = Array.isArray(this.data.extras) ? this.data.extras : [];
@@ -119,6 +130,25 @@ class Store {
     merged.hardlink.renamePattern = String(merged.hardlink.renamePattern || '${name} - ${episode2}').slice(0, 200);
     merged.hardlink.defaultDest = String(merged.hardlink.defaultDest || '').slice(0, 800);
     delete merged.hardlink.extensions;
+
+    // 站点不再支持自定义：默认使用内置站点；旧配置文件里的站点会被替换，
+    // 追番按原站点主机名映射到对应内置站点（认不出就落到默认站点）。
+    // smoke / demo 等本地测试用 ANIRSS_KEEP_BASES=1 保留配置文件里的站点。
+    if (KEEP_CUSTOM_BASES && Array.isArray(this.data.bases)) {
+      merged.bases = this.data.bases;
+    } else {
+      const prevBases = Array.isArray(this.data.bases) ? this.data.bases : [];
+      merged.bases = builtinBases(nowMs());
+      for (const s of merged.subs) {
+        if (!s.baseId) continue; // 完整 URL 追番不依赖站点
+        const prev = prevBases.find((b) => b && b.id === s.baseId);
+        s.baseId = builtinBaseIdForHost(hostOfUrl(prev && prev.url));
+        if (s.path && !/^https?:\/\//i.test(s.path)) {
+          const next = merged.bases.find((b) => b.id === s.baseId);
+          try { s.url = composeUrl(next.url, s.path); } catch { /* 保留原值 */ }
+        }
+      }
+    }
 
     for (const b of merged.bases) {
       b.id = String(b.id || uid('b_'));

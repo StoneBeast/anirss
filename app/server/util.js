@@ -4,6 +4,10 @@ const crypto = require('crypto');
 
 const APP_NAME = 'anirss';
 const APP_VERSION = '1.13.4';
+// 站点已内置（蜜柑计划 / 蜜柑计划(境外)），不再支持自定义。smoke / demo 等
+// 本地测试需要一个指向本机假 RSS 的站点，显式设置 ANIRSS_KEEP_BASES=1 时
+// 才保留配置文件里的非内置站点、放开 bases 增删改接口。
+const KEEP_CUSTOM_BASES = process.env.ANIRSS_KEEP_BASES === '1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 anirss/' + APP_VERSION;
 
@@ -379,6 +383,7 @@ module.exports = {
   APP_NAME,
   APP_VERSION,
   UA,
+  KEEP_CUSTOM_BASES,
   uid,
   nowMs,
   httpError,

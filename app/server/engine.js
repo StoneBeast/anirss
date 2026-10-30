@@ -2911,6 +2911,8 @@ class Engine {
     }
 
     this.store._normalize();
+    // 站点已内置：导入文件里的站点会被 _normalize 替换成内置站点，计数按替换后的来
+    if (src.bases !== undefined) counts.bases = this.data.bases.length;
     this.cache.clear();
     this.homeMetaCache.clear();
     this.searchJobs.clear();

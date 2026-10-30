@@ -466,7 +466,9 @@ async function main() {
   const logFd = fs.openSync(logPath, 'a');
   const child = spawn(NODE, [SERVER], {
     cwd: ROOT,
-    env: { ...process.env, ANIRSS_DATA: DATA_DIR, ANIRSS_PORT: String(APP_PORT), ANIRSS_HOST: '127.0.0.1' },
+    // ANIRSS_KEEP_BASES：站点已内置，烟测需要指向本机假 qB / 假 RSS 的自定义站点，
+    // 用这个测试开关保留配置里的站点并放开 bases 增删改接口
+    env: { ...process.env, ANIRSS_DATA: DATA_DIR, ANIRSS_PORT: String(APP_PORT), ANIRSS_HOST: '127.0.0.1', ANIRSS_KEEP_BASES: '1' },
     stdio: ['ignore', logFd, logFd],
     windowsHide: true,
   });
@@ -484,9 +486,12 @@ async function main() {
     await waitHealth();
 
     let state = await api('/api/state');
-    assert.strictEqual(state.bases.length, 1, '应有一个默认 Mikan 站点');
+    assert.strictEqual(state.bases.length, 2, '应有内置的两个站点');
+    assert.strictEqual(state.bases[0].id, 'b_mikan');
+    assert.strictEqual(state.bases[1].id, 'b_mikan_overseas');
     assert.ok(state.bases[0].url.includes('mikanime.tv'));
-    console.log('✓ 初始状态 / 默认站点');
+    assert.ok(state.bases[1].url.includes('mikanani.me'));
+    console.log('✓ 初始状态 / 内置站点');
 
     const test = await api('/api/qb/test', {
       method: 'POST',
