@@ -1,0 +1,87 @@
+name: CI
+
+# 每次推到 main / PR 都会跑：单元测试、烟测、性能自检，并真的构建一次 FPK，
+# 保证「能打包」这件事在合并前就被验证过。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 测试（Node ${{ matrix.node }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # fnOS 应用市场装的是 nodejs_v24；20 是 package.json 里声明的下限
+        node: ['20', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 单元测试
+        run: node dev/unit.js
+
+      - name: 端到端烟测（假 qB / 假 RSS）
+        run: node dev/smoke.js
+
+      - name: 性能自检
+        run: node dev/perf-check.js
+
+  package:
+    name: 构建 FPK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 构建并自检
+        run: python dev/build-fpk.py
+
+      - name: 生成校验和
+        run: cd dist && sha256sum *.fpk > SHA256SUMS
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anirss-fpk
+          # 每次构建的包都带 SHA256SUMS，方便核对下载是否完整
+          path: |
+            dist/*.fpk
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  docker:
+    name: 验证镜像能构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 构建镜像（不推送）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,mode=max,scope=ci

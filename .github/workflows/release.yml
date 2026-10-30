@@ -1,0 +1,205 @@
+name: Release
+
+# 打 tag（v1.13.3）就自动：跑测试 → 构建 FPK → 发 GitHub Release（附 SHA256SUMS）
+# → 顺手把 Docker 镜像推到 GHCR（amd64 + arm64）。
+#
+# 手动触发（workflow_dispatch）只构建 FPK 并作为 artifact 留存，不发版、不推镜像；
+# 想发版请推 tag，版本号以 manifest 为准。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要打包的版本号（必须与 manifest 一致，如 1.13.3）'
+        required: true
+        type: string
+      push_image:
+        description: '同时构建并推送镜像（不打 tag 也能出镜像）'
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 单元测试
+        run: node dev/unit.js
+
+      - name: 端到端烟测（假 qB / 假 RSS）
+        run: node dev/smoke.js
+
+      - name: 性能自检
+        run: node dev/perf-check.js
+
+  fpk:
+    name: 构建并发布 FPK
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 解析版本号
+        id: version
+        env:
+          # 用 env 传入手动输入，避免把用户输入直接拼进脚本
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "版本号需要形如 1.13.3，实际收到：${VERSION}" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: 构建 FPK（版本必须与 manifest 一致）
+        run: python dev/build-fpk.py --expect-version "${VERSION}"
+
+      - name: 生成校验和
+        run: cd dist && sha256sum *.fpk > SHA256SUMS && cat SHA256SUMS
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anirss-fpk-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.fpk
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 发布到 GitHub Releases
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} 已存在，覆盖上传产物"
+            gh release upload "${TAG}" dist/*.fpk dist/SHA256SUMS --clobber
+          else
+            gh release create "${TAG}" dist/*.fpk dist/SHA256SUMS \
+              --title "AniRSS ${VERSION}" \
+              --generate-notes
+          fi
+
+  docker:
+    name: 构建并推送镜像
+    needs: fpk
+    # 推 tag 时自动出镜像；手动触发时勾选 push_image 才会跑
+    if: github.event_name == 'push' || inputs.push_image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # 配了这两个 secret 才推 Docker Hub，没配就只推 GHCR
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 生成版本与镜像标签
+        id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "版本号需要形如 1.13.3，实际收到：${VERSION}" >&2
+            exit 1
+          fi
+
+          REPO_NAME="$(printf '%s' "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
+          GHCR="ghcr.io/${GITHUB_REPOSITORY,,}"
+          TAGS="${GHCR}:${VERSION}"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            TAGS="${TAGS}"$'\n'"${GHCR}:latest"
+          fi
+
+          if [ -n "${DOCKERHUB_USERNAME}" ]; then
+            HUB="docker.io/$(printf '%s' "${DOCKERHUB_USERNAME}" | tr '[:upper:]' '[:lower:]')/${REPO_NAME}"
+            TAGS="${TAGS}"$'\n'"${HUB}:${VERSION}"
+            if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+              TAGS="${TAGS}"$'\n'"${HUB}:latest"
+            fi
+            echo "镜像目标：GHCR + Docker Hub（${HUB}）"
+          else
+            echo "镜像目标：仅 GHCR；要推 Docker Hub 请在仓库 Secrets 里配置 DOCKERHUB_USERNAME 与 DOCKERHUB_TOKEN"
+          fi
+
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          {
+            echo "tags<<TAGS_EOF"
+            printf '%s\n' "${TAGS}"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 准备 QEMU（构建 arm64）
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 登录 Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 构建并推送（amd64 + arm64）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=AniRSS
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=release

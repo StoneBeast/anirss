@@ -71,6 +71,17 @@ python dev/repack-fpk.py anirss.fpk anirss-1.13.2.fpk
 
 `repack-fpk.py` 只重写外层 tar（把生命周期脚本改成 `0755`），不改动 `app.tgz`，因此 `manifest.checksum` 仍然有效。构建后用 `tar -tzf` 检查顶层结构：`app.tgz`、`manifest`、`cmd/`、`config/`、`wizard/`、两个图标。
 
+不想装 `fnpack` 也可以直接构建：`dev/build-fpk.py` 会自己拼出 `app.tgz` 与完整外层结构（权限、checksum 都按同一套 fnOS 约定）。
+
+```bash
+python dev/build-fpk.py                          # 产物 dist/anirss-<manifest 版本>.fpk
+python dev/build-fpk.py --expect-version 1.13.3  # manifest 版本不是 1.13.3 就失败
+python dev/build-fpk.py -o /tmp/anirss.fpk       # 指定输出路径
+SOURCE_DATE_EPOCH=1700000000 python dev/build-fpk.py   # 固定时间戳，产物可复现
+```
+
+构建完会自检结构、权限、`manifest.checksum` 与文件清单，任何一项不对就非零退出。
+
 ### 本地装机测试：别动仓库里的版本号
 
 fnOS 只允许安装版本号高于已装版本的 FPK，所以反复真机测试时不能一直用 `manifest` 里的正式版本号，但也不该为了测试去改仓库（版本号改动会跟着 PR 进 `main`）。做法是：**dev 的差异只写进打包产物**。
@@ -192,7 +203,7 @@ anirss/
 ## 限制
 
 - 只按标题匹配，不解析简介、字幕组字段或集数范围。
-- 不做多用户隔离，也没有内置登录（依赖本机回环、网络控制或反向代理）。
+- 不做多用户隔离，也没有内置登录（依赖本机回环或网络访问控制）。
 - 不把追番同步到 qBittorrent 自带 RSS 列表。
 - 应用停止运行期间不会检查 RSS；重新启动后由调度器继续。
 - 路径模板只在前端展开成最终 `savepath`，不会保存变量本身；修改预设不会回改已有追番；`${name}` 在保存时替换为当时的追番名称，之后改名不会自动改已有追番的路径，需要重新保存追番。
