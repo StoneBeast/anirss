@@ -52,7 +52,7 @@ bash start.sh
 | Docker Hub | `stonebeast/anirss` |
 | GHCR | `ghcr.io/stonebeast/anirss` |
 
-`:latest` 跟随最新正式版，也可以固定版本（如 `1.13.4`）。镜像由发版（推 tag）时的 GitHub Actions 构建推送，没有配 Docker Hub 凭据时只推 GHCR；两个仓库内容一致，Docker Hub 被限流时换 GHCR 拉。
+`:latest` 跟随最新正式版，也可以固定版本（如 `1.13.4`）。
 
 #### 1. 准备数据目录
 
@@ -151,7 +151,7 @@ docker compose pull && docker compose up -d
 
 - qB 跑在宿主机：填 NAS 内网地址（如 `http://192.168.1.10:8080`），或加 `--add-host=host.docker.internal:host-gateway` 后填 `http://host.docker.internal:8080`。qB 的 WebUI 要监听 `0.0.0.0`，只听 `127.0.0.1` 时容器访问不到。
 - qB 也是容器：两个容器放进同一个 Docker 网络，填容器名（如 `http://qbittorrent:8080`）。没有现成网络就先 `docker network create media`，然后给两个容器都加 `--network media`（compose 里用 `networks:`）。
-- qB 里的保存路径、AniRSS 里的路径预设都填**容器内路径**，不是宿主机路径。
+- qB 里的保存路径、AniRSS 里的路径预设都填 **AniRSS 容器内能看到的路径**（即 qB 返回的 savepath 字符串），不是 NAS 宿主机视角的路径。
 
 #### 7. 权限、备份与升级
 
@@ -161,17 +161,13 @@ docker compose pull && docker compose up -d
 - 升级：`docker compose pull && docker compose up -d`（或 `docker rm -f anirss` 后重新 `docker run`）。`/data` 是 bind mount，删容器不丢数据。
 - 卸载：`docker rm -f anirss` 只删容器，数据目录要自己删。
 
-#### 8. 自己构建 / 推到 Docker Hub
+#### 8. 自己构建 
 
 ```bash
 git clone https://github.com/StoneBeast/anirss.git && cd anirss
 docker build -t anirss:local .
 docker run -d --name anirss -p 8777:8777 -v "$PWD/data:/data" anirss:local
 
-# 可选：推到自己的 Docker Hub 仓库
-docker login
-docker tag anirss:local <你的用户名>/anirss:local
-docker push <你的用户名>/anirss:local
 ```
 
 镜像内的 `ANIRSS_HOST=0.0.0.0`、`ANIRSS_PORT=8777`、`ANIRSS_DATA=/data` 已经设好；只改宿主机端口时动 `-p` 左侧即可，右侧容器端口和 `ANIRSS_PORT` 要保持一致。
