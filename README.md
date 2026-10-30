@@ -4,7 +4,7 @@ AniRSS 是一个自托管的 RSS 追番工具：按「站点基础地址 + 追�
 
 只用 Node.js 内置模块，没有 npm 依赖，Node 18 以上就能跑。
 
-![version](https://img.shields.io/badge/version-1.13.2-2f81f7)
+![version](https://img.shields.io/badge/version-1.13.4-2f81f7)
 ![node](https://img.shields.io/badge/node-%E2%89%A518-3c873a)
 ![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-6f42c1)
