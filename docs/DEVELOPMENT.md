@@ -53,11 +53,13 @@ node dev/ui-empty.js    # 空数据首启引导截图
 ```bash
 # 演示数据（假 qB、假 RSS、4 个追番、4 条补番、5 个预设）
 node dev/demo.js
-# 另开终端（ANIRSS_KEEP_BASES=1 保留演示配置里指向本机假 RSS 的自定义站点）：
-ANIRSS_KEEP_BASES=1 ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
+# 另开终端（ANIRSS_DEV_ALLOW_CUSTOM_BASES=1 保留演示配置里指向本机假 RSS 的自定义站点）：
+ANIRSS_DEV_ALLOW_CUSTOM_BASES=1 ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
 ```
 
-> 站点已内置（蜜柑计划 https://mikanime.tv / 蜜柑计划(境外) https://mikanani.me），生产模式下「站点与路径」只读展示、`/api/bases` 的增删改返回 403，旧配置里的站点会被替换并按主机名把追番迁移到对应内置站点。`ANIRSS_KEEP_BASES=1` 是 dev/smoke/demo 专用的测试开关，用于保留配置文件里的自定义站点。
+> 站点已内置（蜜柑计划 https://mikanime.tv / 蜜柑计划(境外) https://mikanani.me），生产模式下「站点与路径」只读展示、`/api/bases` 的增删改返回 403，旧配置里的站点会被替换并按主机名把追番迁移到对应内置站点。`ANIRSS_DEV_ALLOW_CUSTOM_BASES=1` 是 dev/smoke/demo 专用的测试开关，用于保留配置文件里的自定义站点；名字带 `DEV` 是为了避免生产部署误开。
+>
+> `node dev/smoke.js` 会额外起一个**不带该开关**的实例（8789 端口，数据目录 `work/anirss-smoke-data-prod`），覆盖生产模式下的站点替换、403、导入后内存/磁盘一致和导出不含站点。
 
 ### 打包 fnOS FPK
 

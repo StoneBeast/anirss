@@ -2924,7 +2924,7 @@
     try {
       const r = await api('import', { method: 'POST', body: payload });
       const t = r.totals || {};
-      toast(`已导入：站点 ${t.bases || 0}、路径 ${t.paths || 0}、追番 ${t.subs || 0}、补番 ${t.extras || 0}`, 'success', '导入完成');
+      toast(`已导入：路径 ${t.paths || 0}、追番 ${t.subs || 0}、补番 ${t.extras || 0}`, 'success', '导入完成');
       await refresh();
       await loadQbStatus(true);
     } catch (e) {
@@ -3431,7 +3431,7 @@
   }
 
   /* ============================================================
-   * 子模态：基础地址 / 路径 / 追番
+   * 子模态：路径 / 追番
    * ============================================================ */
 
   function syncLock() {

@@ -158,9 +158,17 @@ function sizeFields(src) {
 }
 
 class Engine {
+  /**
+   * 始终取 store 的最新数据对象。
+   * store._normalize() 会整体替换 store.data（导入配置时也会调用），
+   * 这里不能缓存引用，否则导入后引擎会一直读写 normalize 之前的旧对象。
+   */
+  get data() {
+    return this.store.data;
+  }
+
   constructor(store) {
     this.store = store;
-    this.data = store.data;
     this.cache = new Map();
     this.checking = new Set();
     this.queue = [];
@@ -1512,7 +1520,7 @@ class Engine {
     let base = null;
     if (id) base = this.data.bases.find((b) => b.id === id) || null;
     else base = this.data.bases.find((b) => /mikan/i.test(b.url)) || this.data.bases[0] || null;
-    if (!base) throw badRequest('请先在「站点与路径」添加站点基础地址', 'NO_BASE');
+    if (!base) throw badRequest('站点不存在，请重新选择站点', 'NO_BASE');
     let host = '';
     try { host = new URL(base.url).hostname.toLowerCase(); } catch { /* ignore */ }
     const isLocal = host === '127.0.0.1' || host === 'localhost' || host === '::1';
@@ -2911,7 +2919,8 @@ class Engine {
     }
 
     this.store._normalize();
-    // 站点已内置：导入文件里的站点会被 _normalize 替换成内置站点，计数按替换后的来
+    // 站点已内置：导入文件里的站点会被 _normalize 替换成内置站点，计数按替换后的来。
+    // 注意 this.data 是 getter，读的是 normalize 之后的新对象。
     if (src.bases !== undefined) counts.bases = this.data.bases.length;
     this.cache.clear();
     this.homeMetaCache.clear();
@@ -2937,7 +2946,7 @@ class Engine {
       app: 'anirss',
       version: APP_VERSION,
       exportedAt: new Date().toISOString(),
-      note: '不包含 qBittorrent 密码与代理密码；导入后请重新填写密码。',
+      note: '站点为应用内置，不包含在导出中；不包含 qBittorrent 密码与代理密码，导入后请重新填写。',
       qb: {
         baseUrl: this.data.qb.baseUrl,
         username: this.data.qb.username,
@@ -2945,7 +2954,6 @@ class Engine {
       },
       proxy: this.publicProxyConfig(),
       hardlink: this.publicHardlinkConfig(),
-      bases: this.data.bases,
       paths: this.data.paths,
       subs: this.data.subs,
       extras: this.data.extras,

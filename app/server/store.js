@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { APP_VERSION, uid, nowMs, deepMerge, composeUrl, KEEP_CUSTOM_BASES } = require('./util');
+const { APP_VERSION, uid, nowMs, deepMerge, composeUrl, ALLOW_CUSTOM_BASES } = require('./util');
 const { defaultProxy, normalizeProxy } = require('./proxy');
 const { DEFAULT_EXTENSIONS, DEFAULT_SUB_EXTENSIONS, DEFAULT_EXCLUDE_DIRS, DEFAULT_EXCLUDE_TAGS } = require('./hardlink');
 
@@ -98,7 +98,8 @@ class Store {
 
   _normalize() {
     const base = defaultData();
-    // 以默认结构补齐缺失字段；数组（bases/paths/subs/...）以文件内容为准
+    // 以默认结构补齐缺失字段；paths/subs/extras 等数组以文件内容为准。
+    // bases 例外：站点由应用内置，见下方「站点不再支持自定义」。
     const merged = deepMerge(base, this.data);
     merged.appVersion = APP_VERSION;
     merged.paths = Array.isArray(this.data.paths) ? this.data.paths : [];
@@ -133,12 +134,17 @@ class Store {
 
     // 站点不再支持自定义：默认使用内置站点；旧配置文件里的站点会被替换，
     // 追番按原站点主机名映射到对应内置站点（认不出就落到默认站点）。
-    // smoke / demo 等本地测试用 ANIRSS_KEEP_BASES=1 保留配置文件里的站点。
-    if (KEEP_CUSTOM_BASES && Array.isArray(this.data.bases)) {
+    // dev/smoke/demo 等本地测试用 ANIRSS_DEV_ALLOW_CUSTOM_BASES=1 保留配置文件里的站点。
+    if (ALLOW_CUSTOM_BASES && Array.isArray(this.data.bases)) {
       merged.bases = this.data.bases;
     } else {
       const prevBases = Array.isArray(this.data.bases) ? this.data.bases : [];
-      merged.bases = builtinBases(nowMs());
+      const prevById = new Map(prevBases.filter((b) => b && b.id).map((b) => [b.id, b]));
+      merged.bases = builtinBases(nowMs()).map((b) => {
+        // 沿用已落盘的 createdAt，避免每次启动都刷新内置站点的时间戳
+        const old = prevById.get(b.id);
+        return old && Number(old.createdAt) ? { ...b, createdAt: Number(old.createdAt) } : b;
+      });
       for (const s of merged.subs) {
         if (!s.baseId) continue; // 完整 URL 追番不依赖站点
         const prev = prevBases.find((b) => b && b.id === s.baseId);

@@ -11,6 +11,9 @@
  *   5. 填过内容按 Esc → 关（显式退出仍然有效）
  *   6. 填过内容点「取消」→ 关
  *
+ * 用「新增存储路径」弹窗做验证：站点已内置、站点弹窗已移除，
+ * 路径弹窗是同样走 openModal 的常驻表单。
+ *
  * 前提：Chrome 9222 + anirss 实例 8777（同 dev/ui-actions.js）。
  * 可用 ANIRSS_CDP / ANIRSS_APP 覆盖地址，例如验证打包产物：ANIRSS_APP=http://127.0.0.1:8788
  */
@@ -97,16 +100,16 @@ function check(name, ok, detail) {
   else fail.push(name + (detail ? ' — ' + detail : ''));
 }
 
-const modalOpen = () => evaluate(`!!document.querySelector('#modal-root form#base-form')`);
+const modalOpen = () => evaluate(`!!document.querySelector('#modal-root form#path-form')`);
 
-/** 打开「站点」弹窗，并返回遮罩/卡片/输入框的关键坐标 */
+/** 打开「新增存储路径」弹窗，并返回遮罩/卡片/输入框的关键坐标 */
 async function openModal() {
-  await evaluate(`document.querySelector('#view [data-action="open-base"]').click()`);
+  await evaluate(`document.querySelector('#view [data-action="open-path"]').click()`);
   await sleep(320); // 越过 250ms 的开窗保护窗口
   const geo = await evaluate(`(() => {
     const bd = document.querySelector('#modal-root .modal-backdrop');
     const md = document.querySelector('#modal-root .modal');
-    const inp = document.querySelector('#modal-root #base-name');
+    const inp = document.querySelector('#modal-root #path-name');
     if (!bd || !md || !inp) return null;
     const b = bd.getBoundingClientRect();
     const m = md.getBoundingClientRect();
@@ -124,7 +127,7 @@ async function openModal() {
 
 async function typeIntoInput(pt) {
   await clickAt(pt[0], pt[1]);
-  await send('Input.insertText', { text: 'Mikan' });
+  await send('Input.insertText', { text: '验收路径' });
   await sleep(80);
 }
 
@@ -136,22 +139,22 @@ async function main() {
   await send('Page.reload', { ignoreCache: true });
   await sleep(1200);
 
-  // 等首屏数据到位（站点页有「新增」按钮）
+  // 等首屏数据到位（站点页有「新增存储路径」按钮）
   for (let i = 0; i < 40; i++) {
-    if (await evaluate(`!!document.querySelector('#view [data-action="open-base"]')`)) break;
+    if (await evaluate(`!!document.querySelector('#view [data-action="open-path"]')`)) break;
     await sleep(250);
   }
 
   // 1. 空表单点遮罩 → 关闭
   let geo = await openModal();
-  check('打开站点弹窗', await modalOpen());
+  check('打开路径弹窗', await modalOpen());
   await clickAt(geo.backdrop[0], geo.backdrop[1]);
   check('空表单点遮罩 → 关闭', !(await modalOpen()));
 
   // 2. 填过内容点遮罩 → 不关，也不弹提示
   geo = await openModal();
   await typeIntoInput(geo.input);
-  check('输入后表单标记为已编辑', await evaluate(`!!document.querySelector('#modal-root #base-name').value`));
+  check('输入后表单标记为已编辑', await evaluate(`!!document.querySelector('#modal-root #path-name').value`));
   await clickAt(geo.backdrop[0], geo.backdrop[1]);
   check('填过内容点遮罩 → 不关', await modalOpen());
   check('填过内容点遮罩 → 不弹提示', await evaluate(
@@ -173,7 +176,7 @@ async function main() {
   // 6. 填过内容点「取消」→ 关
   geo = await openModal();
   await typeIntoInput(geo.input);
-  await evaluate(`document.querySelector('#modal-root form#base-form [data-action="close-modal"]').click()`);
+  await evaluate(`document.querySelector('#modal-root form#path-form [data-action="close-modal"]').click()`);
   await sleep(150);
   check('填过内容点「取消」→ 关闭', !(await modalOpen()));
 
@@ -181,12 +184,7 @@ async function main() {
   await evaluate(`document.querySelectorAll('.toast').forEach((t) => t.remove())`);
 
   // 7. 搜索弹窗：没有秒表 / 步骤说明，历史记录可显示与清空
-  await evaluate(`fetch('/api/bases', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: '验收站点', url: 'https://example.com' }),
-  }).then((r) => r.status)`);
-  await send('Page.reload', { ignoreCache: true });
-  await sleep(1200);
+  // 站点已内置，无需再临时创建站点；直接进追番页打开搜索弹窗
   await evaluate(`localStorage.setItem('anirss:search-history', JSON.stringify(['久留美', '芙莉莲']))`);
   await evaluate(`location.hash = '#/subs'`);
   await sleep(400);

@@ -23,11 +23,15 @@ const ROOT = path.resolve(__dirname, '..');
 const SERVER = path.join(ROOT, 'app', 'server', 'index.js');
 // 默认放在仓库外的 work/ 下；沙箱或 CI 里可以用 ANIRSS_SMOKE_DATA 指到可写目录
 const DATA_DIR = process.env.ANIRSS_SMOKE_DATA || path.join(ROOT, '..', 'work', 'anirss-smoke-data');
+// 生产模式（不带 ANIRSS_DEV_ALLOW_CUSTOM_BASES）单独起一个实例：验证内置站点替换与 403
+const PROD_DATA_DIR = DATA_DIR + '-prod';
 const APP_PORT = 8788;
 const QB_PORT = 18080;
 const RSS_PORT = 18081;
 const PROXY_PORT = 18082;
+const PROD_PORT = 8789;
 const APP = `http://127.0.0.1:${APP_PORT}`;
+const PROD_APP = `http://127.0.0.1:${PROD_PORT}`;
 const QB = `http://127.0.0.1:${QB_PORT}`;
 const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
@@ -407,14 +411,14 @@ function seedItems() {
   ];
 }
 
-async function api(pathname, options) {
+async function api(pathname, options, base) {
   const opts = options || {};
   const init = { method: opts.method || 'GET', headers: {} };
   if (opts.body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(opts.body);
   }
-  const res = await fetch(APP + pathname, init);
+  const res = await fetch((base || APP) + pathname, init);
   const raw = await res.text();
   let data;
   try { data = JSON.parse(raw); } catch { data = { raw }; }
@@ -453,6 +457,87 @@ async function waitHealth() {
   throw new Error('anirss 未在预期时间内启动');
 }
 
+/**
+ * 生产模式（不带任何测试开关）单独起一个实例，验证：
+ *   - 启动时把配置里的自定义站点替换成两个内置站点，并把追番迁到内置站点
+ *   - /api/bases 的增删改返回 403
+ *   - 导入配置后内存态与磁盘一致（导入文件里的站点被忽略，追番迁到内置站点）
+ *   - 导出不包含站点
+ */
+async function productionChecks() {
+  fs.rmSync(PROD_DATA_DIR, { recursive: true, force: true });
+  fs.mkdirSync(PROD_DATA_DIR, { recursive: true });
+  // 预置一份「升级前」的配置：自定义站点 + 引用它的追番
+  fs.writeFileSync(path.join(PROD_DATA_DIR, 'config.json'), JSON.stringify({
+    version: 1,
+    bases: [{ id: 'b_legacy', name: '旧站点', url: 'https://legacy.example', note: '' }],
+    paths: [],
+    subs: [{
+      id: 's_legacy', name: '旧追番', baseId: 'b_legacy', path: 'RSS/Bangumi?bangumiId=7',
+      url: 'https://legacy.example/RSS/Bangumi?bangumiId=7', include: '1080p',
+    }],
+    extras: [], downloads: [], logs: [],
+  }, null, 2));
+
+  const logPath = path.join(PROD_DATA_DIR, 'stdout.log');
+  const logFd = fs.openSync(logPath, 'a');
+  const env = { ...process.env, ANIRSS_DATA: PROD_DATA_DIR, ANIRSS_PORT: String(PROD_PORT), ANIRSS_HOST: '127.0.0.1' };
+  delete env.ANIRSS_DEV_ALLOW_CUSTOM_BASES;
+  const child = spawn(NODE, [SERVER], { cwd: ROOT, env, stdio: ['ignore', logFd, logFd], windowsHide: true });
+  const stop = () => {
+    try { child.kill('SIGTERM'); } catch { /* ignore */ }
+    try { fs.closeSync(logFd); } catch { /* ignore */ }
+  };
+  try {
+    for (let i = 0; i < 80; i++) {
+      try {
+        const res = await fetch(PROD_APP + '/api/health');
+        if (res.ok) break;
+      } catch { /* retry */ }
+      await sleep(100);
+    }
+
+    const state = await api('/api/state', {}, PROD_APP);
+    assert.deepStrictEqual(state.bases.map((b) => b.id), ['b_mikan', 'b_mikan_overseas'], '无开关启动应只剩内置站点');
+    assert.strictEqual(state.subs.length, 1);
+    assert.strictEqual(state.subs[0].baseId, 'b_mikan', '旧追番应迁移到内置站点');
+    assert.ok(state.subs[0].url.startsWith('https://mikanime.tv/'), '旧追番地址应重拼到内置站点');
+    console.log('✓ 生产模式：启动替换旧站点 / 追番迁移');
+
+    for (const [method, pathname] of [
+      ['POST', '/api/bases'],
+      ['PUT', '/api/bases/b_mikan'],
+      ['DELETE', '/api/bases/b_mikan'],
+    ]) {
+      const body = method === 'DELETE' ? undefined : { name: 'x', url: 'https://example.com' };
+      await expectError(() => api(pathname, { method, body }, PROD_APP), 403, '内置');
+    }
+    console.log('✓ 生产模式：bases 增删改 403');
+
+    const imported = await api('/api/import', {
+      method: 'POST',
+      body: {
+        app: 'anirss',
+        bases: [{ id: 'b_imported', name: '导入站点', url: 'https://example.test', note: '' }],
+        paths: [],
+        subs: [{
+          id: 's_imported', name: '导入追番', baseId: 'b_imported',
+          path: 'RSS/Bangumi?bangumiId=9', url: 'https://example.test/RSS/Bangumi?bangumiId=9', enabled: false,
+        }],
+      },
+    }, PROD_APP);
+    assert.strictEqual(imported.totals.bases, 2, '导入后站点应仍是 2 个内置站点');
+    const after = await api('/api/state', {}, PROD_APP);
+    assert.deepStrictEqual(after.bases.map((b) => b.id), ['b_mikan', 'b_mikan_overseas'], '导入后内存态也应是内置站点');
+    assert.strictEqual(after.subs[0].baseId, 'b_mikan', '导入的追番应迁移到内置站点');
+    const exp = await (await fetch(PROD_APP + '/api/export')).json();
+    assert.strictEqual(exp.bases, undefined, '导出不应包含站点');
+    console.log('✓ 生产模式：导入后内存/磁盘一致 / 导出不含站点');
+  } finally {
+    stop();
+  }
+}
+
 async function main() {
   fs.rmSync(DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -466,9 +551,9 @@ async function main() {
   const logFd = fs.openSync(logPath, 'a');
   const child = spawn(NODE, [SERVER], {
     cwd: ROOT,
-    // ANIRSS_KEEP_BASES：站点已内置，烟测需要指向本机假 qB / 假 RSS 的自定义站点，
+    // ANIRSS_DEV_ALLOW_CUSTOM_BASES：站点已内置，烟测需要指向本机假 qB / 假 RSS 的自定义站点，
     // 用这个测试开关保留配置里的站点并放开 bases 增删改接口
-    env: { ...process.env, ANIRSS_DATA: DATA_DIR, ANIRSS_PORT: String(APP_PORT), ANIRSS_HOST: '127.0.0.1', ANIRSS_KEEP_BASES: '1' },
+    env: { ...process.env, ANIRSS_DATA: DATA_DIR, ANIRSS_PORT: String(APP_PORT), ANIRSS_HOST: '127.0.0.1', ANIRSS_DEV_ALLOW_CUSTOM_BASES: '1' },
     stdio: ['ignore', logFd, logFd],
     windowsHide: true,
   });
@@ -1160,7 +1245,8 @@ async function main() {
     const exp = await exported.json();
     assert.ok(exp.subs.length >= 2);
     assert.strictEqual(exp.qb.password, undefined);
-    console.log('✓ 配置导出不含密码');
+    assert.strictEqual(exp.bases, undefined, '导出不应包含内置站点');
+    console.log('✓ 配置导出不含密码 / 不含站点');
 
     const finalState = await api('/api/state');
     const stats = finalState.stats;
@@ -1204,6 +1290,8 @@ async function main() {
     assert.strictEqual(afterImport.qb.hasPassword, pwBefore, '导入不应清掉本机 qB 密码');
     await expectError(() => api('/api/import', { method: 'POST', body: { hello: 1 } }), 400, '没有可导入的配置项');
     console.log('✓ 配置导入（覆盖式 / 保留密码 / 拒绝空文件）');
+
+    await productionChecks();
 
     console.log(`\n全部通过。qB 收到 ${qbAdds.length} 个种子，RSS 拉取 ${rssHits} 次。`);
   } finally {
