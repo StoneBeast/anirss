@@ -1,22 +1,47 @@
+# AniRSS · 追番台 —— Docker Compose 部署
+#
+#   docker compose pull
+#   docker compose up -d
+#   浏览器打开 http://<NAS-IP>:8777/
+#
+# 镜像：
+#   Docker Hub  stonebeast/anirss:latest
+#   GHCR        ghcr.io/stonebeast/anirss:latest
+# 固定版本把 :latest 换成 :1.13.4。两个仓库的镜像内容一致，拉不动时可换另一个。
+
 services:
   anirss:
-    image: ghcr.io/stonebeast/anirss:latest
+    image: stonebeast/anirss:latest
     container_name: anirss
     restart: unless-stopped
     ports:
+      # 左侧宿主机端口可改（如 "18777:8777"）；右侧是容器端口，
+      # 真要改容器端口，需同时改下面的 ANIRSS_PORT，两处保持一致。
       - "8777:8777"
     environment:
       TZ: Asia/Shanghai
+      # 容器内必须监听 0.0.0.0，否则宿主机访问不到
       ANIRSS_HOST: 0.0.0.0
       ANIRSS_PORT: "8777"
       ANIRSS_DATA: /data
     volumes:
+      # 1) 必挂：配置、历史记录、外挂字幕库（必须可写）
+      #    宿主机目录请先 mkdir 并 chown 1000:1000，否则 Docker 自动创建时属主是 root。
       - ./data:/data
-      # 需要「补番硬链接 / 字幕入库」时，把 qBittorrent 的下载目录与硬链接目标目录
-      # 按宿主机完全相同的路径挂进来（qB 里填写的 savepath 也要是容器内路径），
-      # 且两者必须位于宿主机同一文件系统（硬链接不能跨分区）：
-      # - /mnt/media/downloads:/mnt/media/downloads
-      # - /mnt/media/library:/mnt/media/library
-    # 如宿主机 uid/gid 与镜像内的 1000:1000 不一致，取消下面一行并改成实际值，
-    # 同时确保 ./data 及其它挂载目录对该 uid 可读写：
+      # 2) 只有用「补番硬链接 / 字幕入库」才需要下面两组挂载，二选一。
+      #    冒号右边必须和 qBittorrent 返回的 savepath 逐字符一致；
+      #    下载目录与媒体库还必须在宿主机同一文件系统（硬链接不能跨分区）。
+      #
+      # 例 A：qB 是宿主机进程 / fnOS 应用，返回宿主机路径（左右同路径）
+      # - /vol1/1000/downloads:/vol1/1000/downloads:ro
+      # - /vol1/1000/media:/vol1/1000/media
+      #
+      # 例 B：qB 是容器、内部路径是 /downloads，AniRSS 也挂到 /downloads
+      # - /vol1/1000/downloads:/downloads:ro
+      # - /vol1/1000/media:/media
+    # qBittorrent 跑在宿主机上时，取消注释后可用 host.docker.internal 连接
+    # （Docker 20.10+；qB 的 WebUI 要监听 0.0.0.0）
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    # 宿主机目录属主不是 1000 时，改成实际 uid:gid，并保证挂载目录可读写
     # user: "1000:1000"
