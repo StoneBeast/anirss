@@ -1,7 +1,6 @@
 services:
   anirss:
-    build: .
-    image: anirss:local
+    image: ghcr.io/stonebeast/anirss:latest
     container_name: anirss
     restart: unless-stopped
     ports:

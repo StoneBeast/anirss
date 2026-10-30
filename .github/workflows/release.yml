@@ -14,6 +14,10 @@ on:
         description: '要打包的版本号（必须与 manifest 一致，如 1.13.3）'
         required: true
         type: string
+      push_image:
+        description: '同时构建并推送镜像（不打 tag 也能出镜像）'
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -107,25 +111,62 @@ jobs:
           fi
 
   docker:
-    name: 推送 Docker 镜像到 GHCR
+    name: 构建并推送镜像
     needs: fpk
-    if: github.event_name == 'push'
+    # 推 tag 时自动出镜像；手动触发时勾选 push_image 才会跑
+    if: github.event_name == 'push' || inputs.push_image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    env:
+      # 配了这两个 secret 才推 Docker Hub，没配就只推 GHCR
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 解析版本号与镜像名
+      - name: 生成版本与镜像标签
+        id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          # GHCR 只接受小写仓库名
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "版本号需要形如 1.13.3，实际收到：${VERSION}" >&2
+            exit 1
+          fi
 
-      - name: 准备 QEMU（构建 arm64 镜像）
+          REPO_NAME="$(printf '%s' "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
+          GHCR="ghcr.io/${GITHUB_REPOSITORY,,}"
+          TAGS="${GHCR}:${VERSION}"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            TAGS="${TAGS}"$'\n'"${GHCR}:latest"
+          fi
+
+          if [ -n "${DOCKERHUB_USERNAME}" ]; then
+            HUB="docker.io/$(printf '%s' "${DOCKERHUB_USERNAME}" | tr '[:upper:]' '[:lower:]')/${REPO_NAME}"
+            TAGS="${TAGS}"$'\n'"${HUB}:${VERSION}"
+            if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+              TAGS="${TAGS}"$'\n'"${HUB}:latest"
+            fi
+            echo "镜像目标：GHCR + Docker Hub（${HUB}）"
+          else
+            echo "镜像目标：仅 GHCR；要推 Docker Hub 请在仓库 Secrets 里配置 DOCKERHUB_USERNAME 与 DOCKERHUB_TOKEN"
+          fi
+
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          {
+            echo "tags<<TAGS_EOF"
+            printf '%s\n' "${TAGS}"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 准备 QEMU（构建 arm64）
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
@@ -139,13 +180,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 构建并推送
+      - name: 登录 Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 构建并推送（amd64 + arm64）
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ env.VERSION }}
-            ${{ env.IMAGE }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=AniRSS
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=release

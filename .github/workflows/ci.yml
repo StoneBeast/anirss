@@ -66,3 +66,22 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
+
+  docker:
+    name: 验证镜像能构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 构建镜像（不推送）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,mode=max,scope=ci
