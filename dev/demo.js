@@ -3,7 +3,8 @@
 /**
  * 演示环境：假 qBittorrent + 假 RSS + 一份预置配置
  * 用法：node dev/demo.js
- * 然后另开进程：ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
+ * 然后另开进程（ANIRSS_DEV_ALLOW_CUSTOM_BASES=1 保留预置配置里的自定义站点）：
+ * ANIRSS_DEV_ALLOW_CUSTOM_BASES=1 ANIRSS_DATA=../work/anirss-demo-data ANIRSS_PORT=8777 node app/server/index.js
  */
 
 const http = require('http');
