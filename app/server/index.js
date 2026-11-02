@@ -12,7 +12,7 @@ const { Engine } = require('./engine');
 const { destroyAll: destroyAgents } = require('./agents');
 const {
   APP_NAME, APP_VERSION, uid, nowMs, httpError, badRequest,
-  normalizeBaseUrl, composeUrl, parseBool, truncate,
+  normalizeBaseUrl, composeUrl, parseBool, truncate, ALLOW_CUSTOM_BASES,
 } = require('./util');
 
 const SERVER_DIR = __dirname;
@@ -431,6 +431,13 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/bases' && method === 'GET') {
     return sendJson(res, 200, { bases: engine.data.bases });
+  }
+
+  // 站点已内置（蜜柑计划 / 蜜柑计划(境外)），生产模式下禁止增删改；
+  // 仅 dev/smoke/demo 显式设置 ANIRSS_DEV_ALLOW_CUSTOM_BASES=1 时临时放开。
+  if (!ALLOW_CUSTOM_BASES && (method === 'POST' || method === 'PUT' || method === 'DELETE')
+    && (pathname === '/api/bases' || /^\/api\/bases\/[^/]+$/.test(pathname))) {
+    throw httpError(403, '站点为应用内置（蜜柑计划 / 蜜柑计划(境外)），暂不支持添加、修改或删除', 'BASES_BUILTIN');
   }
 
   if (pathname === '/api/bases' && method === 'POST') {

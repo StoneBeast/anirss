@@ -868,7 +868,7 @@
       : '把 RSS 追番变成 qBittorrent 下载任务';
     const heroSub = st.subs > 0
       ? '新条目出现后按正则筛选，自动提交到 qBittorrent；保存路径、分类、标签均可按追番单独配置。'
-      : '添加站点基础地址，拼出追番路径；用正则筛选标题，自动下载并归档到预设存储路径。';
+      : '选内置站点（蜜柑计划 / 境外），填入追番路径；用正则筛选标题，自动下载并归档到预设存储路径。';
     const recent = (d.downloads || []).slice(0, 6);
     const upcoming = d.subs
       .filter((s) => s.enabled)
@@ -958,8 +958,7 @@
     const d = S.data;
     const steps = [
       { done: verified, title: '连接 qBittorrent', desc: '填写 WebUI 地址和账号，确保能添加种子', action: 'open-connection', label: '去连接' },
-      { done: d.bases.length > 0, title: '准备站点基础地址', desc: '例如 https://mikanime.tv，之后只需填路径', action: 'open-base', label: '添加站点' },
-      { done: d.stats.subs > 0, title: '新增追番', desc: '站点 + 路径，配合包含/排除正则', action: 'open-sub', label: '新增追番' },
+      { done: d.stats.subs > 0, title: '新增追番', desc: '选内置站点 + 路径，配合包含/排除正则', action: 'open-sub', label: '新增追番' },
     ];
     if (steps.every((s) => s.done)) return '';
     return `
@@ -1136,12 +1135,12 @@
         <div class="empty">
           <div class="empty-icon">${icon('rss', 30)}</div>
           <h3>还没有追番</h3>
-          <p>先在「站点与路径」里准备基础地址，再选择站点、填写路径和正则。</p>
+          <p>选一个内置站点、填写追番路径和正则，就可以开始自动追番。</p>
           <div class="empty-actions">
             <button class="btn btn-primary" data-action="open-sub">${icon('plus')}新增追番</button>
             <button class="btn" data-action="open-search">${icon('search')}搜索番剧</button>
             <button class="btn" data-action="open-example">${icon('zap')}填入 Mikan 示例</button>
-            <a class="btn btn-ghost" href="#/library">${icon('server')}管理站点</a>
+            <a class="btn btn-ghost" href="#/library">${icon('server')}查看内置站点</a>
           </div>
         </div>` : list.length === 0 ? `
         <div class="empty">
@@ -2328,7 +2327,7 @@
   function openSearchModal() {
     const d = S.data;
     if (!d.bases.length) {
-      toast('请先在「站点与路径」添加站点基础地址', 'warn');
+      toast('暂无可用站点', 'warn');
       return;
     }
     S.searchResult = null;
@@ -2576,7 +2575,7 @@
       <div class="notice" style="margin-bottom:16px">
         ${icon('info')}
         <div>
-          追番地址 = <strong>站点基础地址</strong> + <strong>路径</strong>。例如
+          追番地址 = <strong>内置站点</strong> + <strong>路径</strong>。例如
           <code>https://mikanime.tv</code> + <code>RSS/Bangumi?bangumiId=3870&amp;subgroupid=203</code>
           <button class="btn btn-sm" style="margin-left:8px" data-action="copy" data-copy="https://mikanime.tv/RSS/Bangumi?bangumiId=3870&amp;subgroupid=203">${icon('copy')}复制示例</button>
         </div>
@@ -2586,12 +2585,12 @@
         <div class="card">
           <div class="card-head">
             <div>
-              <div class="card-title">站点基础地址</div>
+              <div class="card-title">内置站点</div>
+              <div class="card-sub">暂不支持添加或修改</div>
             </div>
-            <button class="btn btn-sm" data-action="open-base">${icon('plus')}新增</button>
           </div>
           <div class="card-body" style="padding-top:12px">
-            ${d.bases.length ? `<div class="preset-list">${d.bases.map((b) => {
+            <div class="preset-list">${d.bases.map((b) => {
               const used = d.subs.filter((s) => s.baseId === b.id).length;
               return `
                 <div class="preset-item">
@@ -2601,13 +2600,9 @@
                     <div class="preset-value" title="${esc(b.url)}">${esc(b.url)}</div>
                     ${b.note ? `<div class="preset-meta">${esc(b.note)}</div>` : ''}
                   </div>
-                  <div class="preset-actions">
-                    <button class="icon-btn" data-action="edit-base" data-id="${esc(b.id)}" title="编辑">${icon('edit')}</button>
-                    <button class="icon-btn danger" data-action="delete-base" data-id="${esc(b.id)}" title="删除">${icon('trash')}</button>
-                  </div>
                 </div>`;
-            }).join('')}</div>` : `
-              <div class="qb-empty">还没有站点基础地址<br><button class="btn btn-sm" style="margin-top:10px" data-action="open-base">${icon('plus')}添加第一个</button></div>`}
+            }).join('')}</div>
+            <div class="field-hint" style="margin-top:12px">站点由应用内置（当前功能围绕蜜柑计划展开），暂时无法自定义；新增追番时选择站点后填路径即可。</div>
           </div>
         </div>
 
@@ -2921,7 +2916,7 @@
     }
     const ok = await askConfirm({
       title: '导入配置',
-      message: `会用「${file.name}」里的内容覆盖当前的站点、存储路径、追番和补番记录（${S.data.subs.length} 个追番 → 导入文件的条数）。\nqBittorrent 与代理的密码不会从文件读取，导入后需要重新填写。建议先导出当前的配置作为备份。`,
+      message: `会用「${file.name}」里的内容覆盖当前的存储路径、追番和补番记录（${S.data.subs.length} 个追番 → 导入文件的条数）。\n站点为应用内置（蜜柑计划 / 蜜柑计划(境外)），不受导入影响；qBittorrent 与代理的密码不会从文件读取，导入后需要重新填写。建议先导出当前的配置作为备份。`,
       confirmText: '覆盖导入',
       danger: true,
     });
@@ -2929,7 +2924,7 @@
     try {
       const r = await api('import', { method: 'POST', body: payload });
       const t = r.totals || {};
-      toast(`已导入：站点 ${t.bases || 0}、路径 ${t.paths || 0}、追番 ${t.subs || 0}、补番 ${t.extras || 0}`, 'success', '导入完成');
+      toast(`已导入：路径 ${t.paths || 0}、追番 ${t.subs || 0}、补番 ${t.extras || 0}`, 'success', '导入完成');
       await refresh();
       await loadQbStatus(true);
     } catch (e) {
@@ -3030,7 +3025,7 @@
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const action = el.dataset.action;
-    if (['open-sub', 'edit-sub', 'preview-form', 'save-sub', 'open-base', 'edit-base', 'open-path', 'edit-path', 'copy'].includes(action)) {
+    if (['open-sub', 'edit-sub', 'preview-form', 'save-sub', 'open-path', 'edit-path', 'copy'].includes(action)) {
       if (el.tagName === 'A') e.preventDefault();
     }
     handleAction(action, el, e).catch((err) => {
@@ -3262,34 +3257,6 @@
         });
         break;
 
-      case 'open-base':
-        openBaseModal(null);
-        break;
-      case 'edit-base':
-        openBaseModal(id);
-        break;
-      case 'delete-base': {
-        const base = S.data.bases.find((b) => b.id === id);
-        if (!base) break;
-        const used = S.data.subs.filter((s) => s.baseId === id).length;
-        if (used > 0) {
-          toast(`有 ${used} 个追番正在使用该站点，请先修改或删除这些追番`, 'warn');
-          break;
-        }
-        const ok = await askConfirm({
-          title: '删除站点',
-          message: `确定删除站点「${base.name}」吗？这不会影响已经创建的追番。`,
-          confirmText: '删除站点',
-          danger: true,
-        });
-        if (!ok) break;
-        await withBusy(el, async () => {
-          await api('bases/' + encodeURIComponent(id), { method: 'DELETE' });
-          toast('站点已删除', 'success');
-          await refresh();
-        });
-        break;
-      }
       case 'open-path':
         openPathModal(null);
         break;
@@ -3464,7 +3431,7 @@
   }
 
   /* ============================================================
-   * 子模态：基础地址 / 路径 / 追番
+   * 子模态：路径 / 追番
    * ============================================================ */
 
   function syncLock() {
@@ -3762,45 +3729,6 @@
     });
   }
 
-  function openBaseModal(id) {
-    const d = S.data;
-    const base = id ? d.bases.find((b) => b.id === id) : null;
-    const used = base ? d.subs.filter((s) => s.baseId === base.id).length : 0;
-    openModal(`
-      <div class="modal-backdrop" data-backdrop="modal">
-        <form class="modal" id="base-form" data-id="${base ? esc(base.id) : ''}">
-          <div class="modal-head">
-            <div>
-              <div class="modal-title">${base ? '编辑站点' : '新增站点'}</div>
-            </div>
-            <button class="icon-btn modal-close" type="button" data-action="close-modal">${icon('x')}</button>
-          </div>
-          <div class="modal-body">
-            <div class="form">
-              <div class="field">
-                <label class="field-label" for="base-name">名称 <span class="req">*</span></label>
-                <input class="input" id="base-name" value="${esc(base ? base.name : '')}" placeholder="例如：Mikan" maxlength="60">
-              </div>
-              <div class="field">
-                <label class="field-label" for="base-url">基础地址 <span class="req">*</span></label>
-                <input class="input mono" id="base-url" value="${esc(base ? base.url : '')}" placeholder="https://mikanime.tv" spellcheck="false">
-                <div class="field-hint">只到域名（可带子路径），不要包含具体的 RSS 路径。例如 <code>https://mikanime.tv</code>。</div>
-              </div>
-              <div class="field">
-                <label class="field-label" for="base-note">备注</label>
-                <input class="input" id="base-note" value="${esc(base ? base.note : '')}" placeholder="可选，例如：蜜柑计划" maxlength="120">
-              </div>
-              ${base && used ? `<div class="notice amber">${icon('alert')}<div>修改基础地址会影响 <strong>${used}</strong> 个使用该站点的追番。保存后这些追番会重新拼接地址，并在下次检查时只记录现有条目。</div></div>` : ''}
-            </div>
-          </div>
-          <div class="modal-foot">
-            <button class="btn" type="button" data-action="close-modal">取消</button>
-            <button class="btn btn-primary" type="submit">${base ? '保存修改' : '添加站点'}</button>
-          </div>
-        </form>
-      </div>`, 'base');
-  }
-
   function openPathModal(prefill, id) {
     const d = S.data;
     const path = id ? d.paths.find((p) => p.id === id) : null;
@@ -3895,11 +3823,11 @@
                 <div class="field full sub-pane ${mode === 'base' ? '' : 'hidden'}" data-pane="base">
                   <div class="form-grid" style="gap:12px">
                     <div class="field">
-                      <label class="field-label" for="f-base">站点基础地址</label>
+                      <label class="field-label" for="f-base">站点</label>
                       <select class="select" id="f-base">
-                        ${bases.length ? bases.map((b) => `<option value="${esc(b.id)}" ${base && b.id === base.id ? 'selected' : ''}>${esc(b.name)} — ${esc(hostOf(b.url))}</option>`).join('') : '<option value="">（没有站点，请先添加）</option>'}
+                        ${bases.length ? bases.map((b) => `<option value="${esc(b.id)}" ${base && b.id === base.id ? 'selected' : ''}>${esc(b.name)} — ${esc(hostOf(b.url))}</option>`).join('') : '<option value="">（没有可用站点）</option>'}
                       </select>
-                      <div class="field-hint" id="base-hint">${base ? esc(base.url) : '请先在「站点与路径」添加基础地址'}</div>
+                      <div class="field-hint" id="base-hint">${base ? esc(base.url) : '请选择站点'}</div>
                     </div>
                     <div class="field">
                       <label class="field-label" for="f-path">追番路径 <span class="req">*</span></label>
@@ -4239,7 +4167,7 @@
       const path = $('#f-path', form)?.value.trim() || '';
       url = composeClientUrl(base ? base.url : '', path);
       const hint = $('#base-hint', form);
-      if (hint) hint.textContent = base ? base.url : '请先在「站点与路径」添加基础地址';
+      if (hint) hint.textContent = base ? base.url : '请选择站点';
     } else {
       url = $('#f-url', form)?.value.trim() || '';
     }
@@ -4353,7 +4281,7 @@
     if (mode === 'base') {
       const baseId = $('#f-base', form).value;
       const path = $('#f-path', form).value.trim();
-      if (!baseId) throw new Error('请选择站点基础地址，或先到「站点与路径」添加');
+      if (!baseId) throw new Error('请选择站点');
       if (!path) throw new Error('请填写追番路径');
       payload.baseId = baseId;
       payload.path = path;
@@ -4393,7 +4321,7 @@
       setSubMode('full');
       const urlInput = $('#f-url', form);
       if (urlInput) urlInput.value = 'https://mikanime.tv/' + examplePath;
-      if (!silent) toast('没有 Mikan 站点预设，已填入完整地址；可到「站点与路径」补一个基础地址', 'info');
+      if (!silent) toast('没有 Mikan 站点，已填入完整地址', 'info');
     }
     const include = $('#f-include', form);
     if (include && !include.value.trim()) include.value = '1080p';
@@ -4594,7 +4522,7 @@
   }
 
   /* ============================================================
-   * 表单提交：连接 / 站点 / 路径 / 追番
+   * 表单提交：连接 / 路径 / 追番
    * ============================================================ */
 
   document.addEventListener('submit', (e) => {
@@ -4620,9 +4548,6 @@
     } else if (form.id === 'sub-form') {
       e.preventDefault();
       saveSub(form);
-    } else if (form.id === 'base-form') {
-      e.preventDefault();
-      saveBase(form);
     } else if (form.id === 'path-form') {
       e.preventDefault();
       savePath(form);
@@ -4694,27 +4619,6 @@
       }
       await refresh();
       await loadQbStatus(true);
-    });
-  }
-
-  async function saveBase(form) {
-    const btn = form.querySelector('button[type="submit"]');
-    await withBusy(btn, async () => {
-      const id = form.dataset.id || '';
-      const name = $('#base-name', form).value.trim();
-      const url = $('#base-url', form).value.trim();
-      const note = $('#base-note', form).value.trim();
-      if (!name) throw new Error('请填写站点名称');
-      if (!url) throw new Error('请填写基础地址');
-      if (id) {
-        const r = await api('bases/' + encodeURIComponent(id), { method: 'PUT', body: { name, url, note } });
-        toast(r.affected ? `站点已保存，同步更新了 ${r.affected} 个追番地址` : '站点已保存', 'success');
-      } else {
-        await api('bases', { method: 'POST', body: { name, url, note } });
-        toast('站点已添加', 'success');
-      }
-      closeModal();
-      await refresh();
     });
   }
 

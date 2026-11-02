@@ -6,7 +6,8 @@
 
 ![新增追番](subscription-form.png)
 
-- 追番地址 = 站点基础地址 + 路径，例如 `RSS/Bangumi?bangumiId=3870&subgroupid=203`；也可以切到「完整 URL」直接粘贴整条地址。
+- 站点是应用内置的：蜜柑计划 `https://mikanime.tv` 与蜜柑计划(境外) `https://mikanani.me`，在「站点与路径」里只读展示，不能增删改。
+- 追番地址 = 内置站点 + 路径，例如 `RSS/Bangumi?bangumiId=3870&subgroupid=203`；也可以切到「完整 URL」直接粘贴整条地址。
 - 追番名称会根据地址自动获取，也可以自己改。
 - 包含正则 / 排除正则每行一条，任意一条命中即生效，排除优先；留空表示全收。
 - 存储路径选预设或直接填，留空则用 qBittorrent 默认路径。
