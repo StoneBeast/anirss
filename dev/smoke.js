@@ -1287,8 +1287,8 @@ async function main() {
           needsSeed: true,
         }],
         extras: [],
-        qb: { baseUrl: 'http://127.0.0.1:18080', username: 'admin', skipTlsVerify: false },
-        proxy: { enabled: false, type: 'http', host: '', port: 0, username: '', noProxy: '', skipTlsVerify: false },
+        qb: { baseUrl: 'http://127.0.0.1:18080', username: 'admin', skipTlsVerify: false, password: 'file-qb-pass' },
+        proxy: { enabled: false, type: 'http', host: '', port: 0, username: '', noProxy: '', skipTlsVerify: false, password: 'file-proxy-pass' },
       },
     });
     assert.strictEqual(imported.totals.subs, 1);
@@ -1301,6 +1301,9 @@ async function main() {
     assert.strictEqual(afterImport.qb.verifiedAt, 0, '导入后应清掉旧验证时间');
     assert.strictEqual(afterImport.qb.lastTest, null, '导入后应清掉旧测试结果');
     assert.strictEqual(afterImport.proxy.hasPassword, true, '导入不应清掉本机代理密码');
+    // 文件里塞的密码不能被采用：仍用本机保存的密码登录 mock qB（它只认 secret）
+    const retest = await api('/api/qb/test', { method: 'POST', body: {} });
+    assert.strictEqual(retest.ok, true, '导入文件里的密码不应生效');
     await expectError(() => api('/api/import', { method: 'POST', body: { hello: 1 } }), 400, '没有可导入的配置项');
     console.log('✓ 配置导入（覆盖式 / 保留密码 / 重置 qB 验证 / 拒绝空文件）');
 

@@ -728,6 +728,18 @@ test('硬链接：正片/字幕识别与规划', () => {
       assert.strictEqual(store.data.proxy.port, 7891);
       assert.strictEqual(store.data.proxy.password, 'proxy-secret', '导入未带密码时保留本机代理密码');
 
+      // 密码既不导出，也不从导入文件读取：文件里塞密码也不能覆盖本机
+      const exported = engine.exportConfig();
+      assert.strictEqual(exported.qb.password, undefined, '导出不应包含 qB 密码');
+      assert.strictEqual(exported.proxy.password, undefined, '导出不应包含代理密码');
+      assert.strictEqual(exported.proxy.hasPassword, true, '导出只回传 hasPassword');
+      engine.importConfig({
+        qb: { baseUrl: 'http://new.local:9000', password: 'file-qb-pass' },
+        proxy: { enabled: false, type: 'http', host: '10.0.0.2', port: 7891, password: 'file-proxy-pass' },
+      });
+      assert.strictEqual(store.data.qb.password, 'qb-secret', '导入文件里的 qB 密码应被忽略');
+      assert.strictEqual(store.data.proxy.password, 'proxy-secret', '导入文件里的代理密码应被忽略');
+
       assert.throws(() => engine.importConfig({ qb: { baseUrl: 'ftp://bad.local' } }), /http/);
       assert.strictEqual(store.data.qb.baseUrl, 'http://new.local:9000', '非法地址不应改动现有配置');
     } finally {

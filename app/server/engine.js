@@ -2896,16 +2896,15 @@ class Engine {
       if (src.qb.baseUrl) qb.baseUrl = normalizeBaseUrl(src.qb.baseUrl);
       if (src.qb.username !== undefined) qb.username = String(src.qb.username || '').slice(0, 120);
       if (src.qb.skipTlsVerify !== undefined) qb.skipTlsVerify = !!src.qb.skipTlsVerify;
-      if (typeof src.qb.password === 'string' && src.qb.password) qb.password = String(src.qb.password).slice(0, 500);
+      // 密码不从导入文件读取：始终保留本机已保存的密码
       // 导入的可能是另一台机器的配置：旧的「已验证 / 上次测试」不能沿用
       qb.verifiedAt = 0;
       qb.lastTest = null;
       counts.qb = 1;
     }
     if (src.proxy && typeof src.proxy === 'object') {
-      // 导出文件里没有代理密码（与 saveProxy 一致：空密码表示沿用本机）
-      const incoming = Object.assign({}, src.proxy);
-      if (!incoming.password) incoming.password = this.data.proxy.password;
+      // 密码不从导入文件读取：始终沿用本机已保存的密码
+      const incoming = Object.assign({}, src.proxy, { password: this.data.proxy.password });
       const nextProxy = normalizeProxy(incoming, this.data.proxy);
       this.data.proxy = nextProxy;
       setProxy(nextProxy); // 立即生效，别等到重启
@@ -2948,7 +2947,7 @@ class Engine {
         subs: this.data.subs.length,
         extras: this.data.extras.length,
       },
-      note: '为了安全，qBittorrent 与代理的密码没有导入，请到「连接设置」确认。',
+      note: '出于安全考虑，导入不会读取 qBittorrent 与代理的密码，已保留本机原有的密码。',
     };
   }
 
@@ -2957,7 +2956,7 @@ class Engine {
       app: 'anirss',
       version: APP_VERSION,
       exportedAt: new Date().toISOString(),
-      note: '站点为应用内置，不包含在导出中；不包含 qBittorrent 密码与代理密码，导入后请重新填写。',
+      note: '站点为应用内置，不包含在导出中；出于安全考虑，不包含 qBittorrent 与代理的密码，导入时会保留本机已保存的密码。',
       qb: {
         baseUrl: this.data.qb.baseUrl,
         username: this.data.qb.username,
