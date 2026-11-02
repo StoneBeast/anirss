@@ -2889,7 +2889,7 @@ class Engine {
     if (Array.isArray(src.bases)) { this.data.bases = src.bases; counts.bases = src.bases.length; }
     if (Array.isArray(src.paths)) { this.data.paths = src.paths; counts.paths = src.paths.length; }
     if (Array.isArray(src.subs)) { this.data.subs = src.subs; counts.subs = src.subs.length; }
-    if (Array.isArray(src.extras)) { this.data.extras = src.extras; counts.extras = src.extras.length; }
+    if (Array.isArray(src.extras)) { this.data.extras = src.extras.map((x) => this.portableExtra(x)); counts.extras = src.extras.length; }
     if (src.qb && typeof src.qb === 'object') {
       const qb = this.data.qb;
       // 地址与「保存连接设置」走同一套校验/规范化，避免导入文件里的歪地址原样落库
@@ -2951,6 +2951,28 @@ class Engine {
     };
   }
 
+  /**
+   * 补番记录的「可迁移」形态：只保留配置，丢掉与本机 qBittorrent / 硬链接进度绑定的运行态。
+   * 导出与导入共用，避免旧备份或手工文件把 qB 快照、已完成标记带回来。
+   */
+  portableExtra(x) {
+    const e = x || {};
+    const hl = e.hardlink && typeof e.hardlink === 'object' ? e.hardlink : {};
+    const clampOffset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+    const { qb, ...rest } = e; // qB 运行快照不跨机器迁移
+    return {
+      ...rest,
+      hardlink: {
+        dest: String(hl.dest || ''),
+        season: Math.max(0, Math.min(999, Number(hl.season) || 0)),
+        enabled: hl.enabled !== false,
+        rename: !!hl.rename,
+        offset: clampOffset(hl.offset),
+        subOffset: hl.subOffset == null || hl.subOffset === '' ? null : clampOffset(hl.subOffset),
+      },
+    };
+  }
+
   exportConfig() {
     return {
       app: 'anirss',
@@ -2966,7 +2988,7 @@ class Engine {
       hardlink: this.publicHardlinkConfig(),
       paths: this.data.paths,
       subs: this.data.subs,
-      extras: this.data.extras,
+      extras: this.data.extras.map((x) => this.portableExtra(x)),
     };
   }
 }

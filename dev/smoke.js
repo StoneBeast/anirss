@@ -1246,7 +1246,9 @@ async function main() {
     assert.ok(exp.subs.length >= 2);
     assert.strictEqual(exp.qb.password, undefined);
     assert.strictEqual(exp.bases, undefined, '导出不应包含内置站点');
-    console.log('✓ 配置导出不含密码 / 不含站点');
+    assert.ok(exp.extras.every((x) => x.qb === undefined), '导出不应包含 qB 运行快照');
+    assert.ok(exp.extras.every((x) => !x.hardlink || x.hardlink.done === undefined), '导出不应包含硬链接运行态');
+    console.log('✓ 配置导出不含密码 / 不含站点 / 不含补番运行态');
 
     const finalState = await api('/api/state');
     const stats = finalState.stats;
