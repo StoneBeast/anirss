@@ -1257,7 +1257,16 @@ async function main() {
     // 健康检查标识与导入配置（放在统计之后，因为导入是覆盖式的）
     const health = await api('/api/health');
     assert.strictEqual(health.app, 'anirss');
-    const pwBefore = (await api('/api/state')).qb.hasPassword;
+    // 导入前先让 qB 处于「已验证」、代理带密码，验证导入会重置验证状态但保留密码
+    await api('/api/qb/test', { method: 'POST', body: {} });
+    await api('/api/proxy', {
+      method: 'PUT',
+      body: { enabled: false, type: 'http', host: '', port: 0, noProxy: '', password: 'proxy-secret' },
+    });
+    const beforeImport = await api('/api/state');
+    assert.ok(beforeImport.qb.verifiedAt > 0, '导入前应处于已验证状态');
+    assert.strictEqual(beforeImport.proxy.hasPassword, true, '导入前代理应已保存密码');
+    const pwBefore = beforeImport.qb.hasPassword;
     const imported = await api('/api/import', {
       method: 'POST',
       body: {
@@ -1279,6 +1288,7 @@ async function main() {
         }],
         extras: [],
         qb: { baseUrl: 'http://127.0.0.1:18080', username: 'admin', skipTlsVerify: false },
+        proxy: { enabled: false, type: 'http', host: '', port: 0, username: '', noProxy: '', skipTlsVerify: false },
       },
     });
     assert.strictEqual(imported.totals.subs, 1);
@@ -1288,8 +1298,11 @@ async function main() {
     assert.strictEqual(afterImport.subs.length, 1, '导入是覆盖式的');
     assert.strictEqual(afterImport.subs[0].name, '导入追番');
     assert.strictEqual(afterImport.qb.hasPassword, pwBefore, '导入不应清掉本机 qB 密码');
+    assert.strictEqual(afterImport.qb.verifiedAt, 0, '导入后应清掉旧验证时间');
+    assert.strictEqual(afterImport.qb.lastTest, null, '导入后应清掉旧测试结果');
+    assert.strictEqual(afterImport.proxy.hasPassword, true, '导入不应清掉本机代理密码');
     await expectError(() => api('/api/import', { method: 'POST', body: { hello: 1 } }), 400, '没有可导入的配置项');
-    console.log('✓ 配置导入（覆盖式 / 保留密码 / 拒绝空文件）');
+    console.log('✓ 配置导入（覆盖式 / 保留密码 / 重置 qB 验证 / 拒绝空文件）');
 
     await productionChecks();
 

@@ -689,6 +689,53 @@ test('硬链接：正片/字幕识别与规划', () => {
     }
   });
 
+  test('导入配置：qB 地址规范化 / 清验证状态 / 保留本机密码（qB 与代理）', () => {
+    const { Store } = require('../app/server/store');
+    const { Engine } = require('../app/server/engine');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-imp-'));
+    const origLog = console.log;
+    try {
+      const store = new Store(path.join(dir, 'config.json'));
+      store.data.qb = {
+        baseUrl: 'http://old.local:8080',
+        username: 'old',
+        password: 'qb-secret',
+        skipTlsVerify: false,
+        verifiedAt: 1700000000000,
+        lastTest: { ok: true, at: 1700000000000, baseUrl: 'http://old.local:8080' },
+      };
+      store.data.proxy = normalizeProxy({
+        enabled: false, type: 'http', host: '10.0.0.1', port: 7890, username: 'u', password: 'proxy-secret',
+      });
+      console.log = () => {};
+      const engine = new Engine(store);
+      engine.qbClient = { fake: true };
+      engine.qbClientKey = 'stale';
+
+      engine.importConfig({
+        qb: { baseUrl: 'new.local:9000/', username: 'new', skipTlsVerify: true },
+        proxy: { enabled: false, type: 'http', host: '10.0.0.2', port: 7891, username: 'u' },
+      });
+
+      assert.strictEqual(store.data.qb.baseUrl, 'http://new.local:9000', '地址应补协议并去掉尾斜杠');
+      assert.strictEqual(store.data.qb.username, 'new');
+      assert.strictEqual(store.data.qb.password, 'qb-secret', '导入未带密码时保留本机 qB 密码');
+      assert.strictEqual(store.data.qb.verifiedAt, 0, '导入后应清掉旧验证时间');
+      assert.strictEqual(store.data.qb.lastTest, null, '导入后应清掉旧测试结果');
+      assert.strictEqual(engine.qbClient, null, '导入后应重置 qB 客户端');
+
+      assert.strictEqual(store.data.proxy.host, '10.0.0.2');
+      assert.strictEqual(store.data.proxy.port, 7891);
+      assert.strictEqual(store.data.proxy.password, 'proxy-secret', '导入未带密码时保留本机代理密码');
+
+      assert.throws(() => engine.importConfig({ qb: { baseUrl: 'ftp://bad.local' } }), /http/);
+      assert.strictEqual(store.data.qb.baseUrl, 'http://new.local:9000', '非法地址不应改动现有配置');
+    } finally {
+      console.log = origLog;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   console.log(`\n单元测试全部通过（${passed} 项）`);
 })().catch((e) => {
   console.error(e && e.stack ? e.stack : e);

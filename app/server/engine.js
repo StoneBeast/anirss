@@ -2892,14 +2892,23 @@ class Engine {
     if (Array.isArray(src.extras)) { this.data.extras = src.extras; counts.extras = src.extras.length; }
     if (src.qb && typeof src.qb === 'object') {
       const qb = this.data.qb;
-      if (src.qb.baseUrl) qb.baseUrl = String(src.qb.baseUrl);
-      if (src.qb.username !== undefined) qb.username = String(src.qb.username || '');
+      // 地址与「保存连接设置」走同一套校验/规范化，避免导入文件里的歪地址原样落库
+      if (src.qb.baseUrl) qb.baseUrl = normalizeBaseUrl(src.qb.baseUrl);
+      if (src.qb.username !== undefined) qb.username = String(src.qb.username || '').slice(0, 120);
       if (src.qb.skipTlsVerify !== undefined) qb.skipTlsVerify = !!src.qb.skipTlsVerify;
-      if (typeof src.qb.password === 'string' && src.qb.password) qb.password = src.qb.password;
+      if (typeof src.qb.password === 'string' && src.qb.password) qb.password = String(src.qb.password).slice(0, 500);
+      // 导入的可能是另一台机器的配置：旧的「已验证 / 上次测试」不能沿用
+      qb.verifiedAt = 0;
+      qb.lastTest = null;
       counts.qb = 1;
     }
     if (src.proxy && typeof src.proxy === 'object') {
-      this.data.proxy = normalizeProxy(src.proxy);
+      // 导出文件里没有代理密码（与 saveProxy 一致：空密码表示沿用本机）
+      const incoming = Object.assign({}, src.proxy);
+      if (!incoming.password) incoming.password = this.data.proxy.password;
+      const nextProxy = normalizeProxy(incoming, this.data.proxy);
+      this.data.proxy = nextProxy;
+      setProxy(nextProxy); // 立即生效，别等到重启
       counts.proxy = 1;
     }
     if (src.hardlink && typeof src.hardlink === 'object') {
@@ -2926,6 +2935,8 @@ class Engine {
     this.homeMetaCache.clear();
     this.searchJobs.clear();
     this.searchFeedCache.clear();
+    // qB 连接信息可能整体换了一台机器，清掉旧客户端与状态缓存
+    this.resetQb();
     this.store.save();
     this.log('info', `已导入配置：站点 ${counts.bases || 0}、路径 ${counts.paths || 0}、追番 ${counts.subs || 0}、补番 ${counts.extras || 0}`);
     return {
