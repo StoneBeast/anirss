@@ -22,10 +22,10 @@ const errors = [];
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function connect() {
-  const targets = await (await fetch(CDP + '/json/list')).json();
+  const targets = await (await fetch(`${CDP}/json/list`)).json();
   let page = targets.find((t) => t.type === 'page');
   if (!page) {
-    const res = await fetch(CDP + '/json/new?about:blank', { method: 'PUT' });
+    const res = await fetch(`${CDP}/json/new?about:blank`, { method: 'PUT' });
     page = await res.json();
   }
   ws = new WebSocket(page.webSocketDebuggerUrl);
@@ -50,16 +50,16 @@ async function connect() {
     }
     if (msg.method === 'Runtime.exceptionThrown') {
       const d = msg.params.exceptionDetails;
-      errors.push('EXCEPTION: ' + (d.exception && d.exception.description ? d.exception.description : d.text));
+      errors.push(`EXCEPTION: ${d.exception && d.exception.description ? d.exception.description : d.text}`);
     }
     if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
-      errors.push('CONSOLE: ' + msg.params.args.map((a) => a.value || a.description || '').join(' '));
+      errors.push(`CONSOLE: ${msg.params.args.map((a) => a.value || a.description || '').join(' ')}`);
     }
     if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
-      errors.push('LOG: ' + msg.params.entry.text);
+      errors.push(`LOG: ${msg.params.entry.text}`);
     }
     if (msg.method === 'Network.responseReceived' && msg.params.response.status >= 400) {
-      errors.push('HTTP ' + msg.params.response.status + ': ' + msg.params.response.url);
+      errors.push(`HTTP ${msg.params.response.status}: ${msg.params.response.url}`);
     }
   };
 }
@@ -69,7 +69,7 @@ function send(method, params) {
     const id = nextId++;
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error('CDP timeout: ' + method));
+      reject(new Error(`CDP timeout: ${method}`));
     }, 30000);
     pending.set(id, {
       resolve: (v) => { clearTimeout(timer); resolve(v); },
@@ -85,7 +85,7 @@ function waitEvent(method, timeout) {
     const timer = setTimeout(() => {
       const idx = list.indexOf(waiter);
       if (idx >= 0) list.splice(idx, 1);
-      reject(new Error('event timeout: ' + method));
+      reject(new Error(`event timeout: ${method}`));
     }, timeout || 15000);
     const waiter = {
       resolve: (v) => { clearTimeout(timer); resolve(v); },
@@ -103,7 +103,7 @@ async function evaluate(expression) {
     userGesture: true,
   });
   if (res.exceptionDetails) {
-    throw new Error(res.exceptionDetails.text + ' ' + (res.exceptionDetails.exception && res.exceptionDetails.exception.description || ''));
+    throw new Error(`${res.exceptionDetails.text} ${res.exceptionDetails.exception && res.exceptionDetails.exception.description || ''}`);
   }
   return res.result ? res.result.value : undefined;
 }
@@ -134,16 +134,16 @@ async function screenshot(name, opts) {
   const params = { format: 'png', captureBeyondViewport: !!clip };
   if (clip) params.clip = clip;
   const res = await send('Page.captureScreenshot', params);
-  const file = path.join(OUT, name + '.png');
+  const file = path.join(OUT, `${name}.png`);
   fs.writeFileSync(file, Buffer.from(res.data, 'base64'));
   const info = { file, width: clip ? clip.width : (options.width || 1440), height: clip ? clip.height : (options.height || 1100) };
-  console.log('screenshot:', file, info.width + 'x' + info.height);
+  console.log('screenshot:', file, `${info.width}x${info.height}`);
   return file;
 }
 
 async function click(selector, wait) {
   const ok = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.click(); return true; })()`);
-  if (!ok) throw new Error('click target not found: ' + selector);
+  if (!ok) throw new Error(`click target not found: ${selector}`);
   await sleep(wait || 600);
 }
 
@@ -156,7 +156,7 @@ async function main() {
   await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
 
-  await send('Page.navigate', { url: APP + '/?ui=' + Date.now() + '#/overview' });
+  await send('Page.navigate', { url: `${APP}/?ui=${Date.now()}#/overview` });
   await waitEvent('Page.loadEventFired', 15000).catch(() => {});
   await sleep(2200);
   errors.length = 0; // 清掉上一个页面/上一次会话残留的 Log 缓冲

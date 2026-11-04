@@ -10,7 +10,7 @@ const APP_VERSION = '1.13.4';
 // 避免生产部署误开：打开它会同时关掉「站点只读」这条产品约束。
 const ALLOW_CUSTOM_BASES = process.env.ANIRSS_DEV_ALLOW_CUSTOM_BASES === '1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 anirss/' + APP_VERSION;
+  `(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 anirss/${APP_VERSION}`;
 
 function uid(prefix) {
   return (prefix || '') + crypto.randomBytes(6).toString('hex');
@@ -43,12 +43,12 @@ function isHttpUrl(value) {
 function normalizeBaseUrl(input) {
   let s = String(input == null ? '' : input).trim();
   if (!s) return '';
-  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) s = 'http://' + s;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) s = `http://${s}`;
   let u;
   try {
     u = new URL(s);
   } catch {
-    throw badRequest('地址格式不正确：' + s, 'BAD_URL');
+    throw badRequest(`地址格式不正确：${s}`, 'BAD_URL');
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     throw badRequest('仅支持 http / https 地址', 'BAD_URL');
@@ -70,7 +70,7 @@ function composeUrl(base, subPath) {
   if (!p) return b;
   if (/^https?:\/\//i.test(p)) return p;
   if (!b) return p;
-  return b + '/' + p.replace(/^\/+/, '');
+  return `${b}/${p.replace(/^\/+/, '')}`;
 }
 
 function splitPatterns(text) {
@@ -96,7 +96,7 @@ function compilePatterns(text, ignoreCase) {
     const first = errors[0];
     const err = badRequest(
       `正则表达式无效（第 ${first.line} 行「${first.pattern}」）：${first.message}`,
-      'BAD_REGEX'
+      'BAD_REGEX',
     );
     err.details = errors;
     throw err;
@@ -134,7 +134,7 @@ function hashKey(parts) {
 function truncate(str, max) {
   const s = String(str == null ? '' : str);
   const limit = max || 300;
-  return s.length > limit ? s.slice(0, limit - 1) + '…' : s;
+  return s.length > limit ? `${s.slice(0, limit - 1)}…` : s;
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -311,7 +311,7 @@ function deepMerge(base, extra) {
 function formatBytes(n) {
   const num = Number(n);
   if (!Number.isFinite(num) || num < 0) return '-';
-  if (num < 1024) return num + ' B';
+  if (num < 1024) return `${num} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];
   let v = num / 1024;
   let i = 0;
@@ -319,7 +319,7 @@ function formatBytes(n) {
     v /= 1024;
     i++;
   }
-  return (v >= 100 ? v.toFixed(0) : v.toFixed(1)) + ' ' + units[i];
+  return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
 }
 
 /**

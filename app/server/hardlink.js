@@ -23,8 +23,6 @@ const DEFAULT_EXCLUDE_DIRS = 'cds,scans,sp,sps,specials,extras,ncop,nced,menu,pv
 // 文件名里的方括号标签整词匹配：NCOP / NCED / PV / CM / SP01 / OVA …
 const DEFAULT_EXCLUDE_TAGS = 'ncop,nced,pv,cm,menu,trailer,preview,sp,ova,oad,special,特典,映像特典';
 const DEFAULT_FONT_EXTENSIONS = 'ttf,otf,ttc,otc,woff,woff2';
-// 字幕可能单独放在这些目录里
-const SUBTITLE_DIR_HINTS = new Set(['subs', 'sub', 'subtitles', 'subtitle', 'ass', 'chs', 'cht', 'sc', 'tc', '字幕']);
 const MAX_FILES = 5000;
 
 /** 解析扩展名列表："mkv, mp4、.ts" 都可以，统一成不带点的小写集合 */
@@ -119,10 +117,6 @@ function hasExcludedTag(rel, excludeTags) {
 function hasExcludedDir(rel, excludeDirs) {
   if (!excludeDirs || !excludeDirs.size) return false;
   return dirSegments(rel).some((seg) => excludeDirs.has(seg));
-}
-
-function inSubtitleDir(rel) {
-  return dirSegments(rel).some((seg) => SUBTITLE_DIR_HINTS.has(seg));
 }
 
 /** 所有文件是否共用一个顶层目录；是则返回该目录名（多文件种子的种子文件夹） */
@@ -477,7 +471,7 @@ function planMirror(input) {
   }
   const files = list.map((p) => ({
     src: p.rel,
-    dest: prefix && p.rel.startsWith(prefix + '/') ? p.rel.slice(prefix.length + 1) : p.rel,
+    dest: prefix && p.rel.startsWith(`${prefix}/`) ? p.rel.slice(prefix.length + 1) : p.rel,
     size: p.size,
     kind: 'file',
     abs: p.abs || '',

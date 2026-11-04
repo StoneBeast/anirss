@@ -31,7 +31,7 @@ function decompress(buf, encoding) {
       }
     }
   } catch (e) {
-    throw httpError(502, '响应解压失败：' + e.message, 'DECOMPRESS_FAILED');
+    throw httpError(502, `响应解压失败：${e.message}`, 'DECOMPRESS_FAILED');
   }
   return buf;
 }
@@ -95,7 +95,7 @@ function fetchBuffer(inputUrl, opts) {
       try {
         u = new URL(target);
       } catch {
-        return fail(httpError(400, '无效的地址：' + target, 'BAD_URL'));
+        return fail(httpError(400, `无效的地址：${target}`, 'BAD_URL'));
       }
       if (u.protocol !== 'http:' && u.protocol !== 'https:') {
         return fail(httpError(400, '仅支持 http / https 地址', 'BAD_URL'));
@@ -121,77 +121,77 @@ function fetchBuffer(inputUrl, opts) {
       if (plan && plan.agent !== undefined) reqOptions.agent = plan.agent;
       else if (!plan) reqOptions.agent = agentFor(u.protocol, options.rejectUnauthorized !== false);
       const onResponse = (res) => {
-          const status = res.statusCode || 0;
-          if (status >= 300 && status < 400 && res.headers.location) {
-            res.resume();
-            if (redirectsLeft <= 0) {
-              return fail(httpError(502, '重定向次数过多', 'TOO_MANY_REDIRECTS'));
-            }
-            let next;
-            try {
-              next = new URL(res.headers.location, u).href;
-            } catch {
-              return fail(httpError(502, '重定向地址无效', 'BAD_REDIRECT'));
-            }
-            go(next, redirectsLeft - 1).catch(fail);
-            return;
+        const status = res.statusCode || 0;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.resume();
+          if (redirectsLeft <= 0) {
+            return fail(httpError(502, '重定向次数过多', 'TOO_MANY_REDIRECTS'));
           }
-
-          if (status < 200 || status >= 300) {
-            const chunks = [];
-            let size = 0;
-            res.on('data', (chunk) => {
-              size += chunk.length;
-              if (size <= 16 * 1024) chunks.push(chunk);
-            });
-            res.on('end', () => {
-              const excerpt = Buffer.concat(chunks).toString('utf8')
-                .replace(/[\u0000-\u001f\u007f\ufffd]+/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim()
-                .slice(0, 160);
-              fail(httpError(
-                502,
-                `请求失败（HTTP ${status}）${u.host}${excerpt ? '：' + excerpt : ''}`,
-                'HTTP_STATUS'
-              ));
-            });
-            res.on('error', fail);
-            return;
+          let next;
+          try {
+            next = new URL(res.headers.location, u).href;
+          } catch {
+            return fail(httpError(502, '重定向地址无效', 'BAD_REDIRECT'));
           }
+          go(next, redirectsLeft - 1).catch(fail);
+          return;
+        }
 
-          const declared = Number(res.headers['content-length'] || 0);
-          if (declared && declared > maxBytes) {
-            res.resume();
-            return fail(httpError(413, `内容过大（${formatBytes(declared)}），上限 ${formatBytes(maxBytes)}`, 'TOO_LARGE'));
-          }
-
+        if (status < 200 || status >= 300) {
           const chunks = [];
           let size = 0;
           res.on('data', (chunk) => {
             size += chunk.length;
-            if (size > maxBytes) {
-              req.destroy();
-              return fail(httpError(413, `内容过大，超过上限 ${formatBytes(maxBytes)}`, 'TOO_LARGE'));
-            }
-            chunks.push(chunk);
+            if (size <= 16 * 1024) chunks.push(chunk);
           });
           res.on('end', () => {
-            try {
-              const raw = Buffer.concat(chunks);
-              const body = decompress(raw, res.headers['content-encoding']);
-              done({
-                buffer: body,
-                headers: res.headers,
-                status,
-                url: u.href,
-                contentType: String(res.headers['content-type'] || ''),
-              });
-            } catch (e) {
-              fail(e);
-            }
+            const excerpt = Buffer.concat(chunks).toString('utf8')
+              .replace(/[\u0000-\u001f\u007f\ufffd]+/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 160);
+            fail(httpError(
+              502,
+              `请求失败（HTTP ${status}）${u.host}${excerpt ? `：${excerpt}` : ''}`,
+              'HTTP_STATUS',
+            ));
           });
           res.on('error', fail);
+          return;
+        }
+
+        const declared = Number(res.headers['content-length'] || 0);
+        if (declared && declared > maxBytes) {
+          res.resume();
+          return fail(httpError(413, `内容过大（${formatBytes(declared)}），上限 ${formatBytes(maxBytes)}`, 'TOO_LARGE'));
+        }
+
+        const chunks = [];
+        let size = 0;
+        res.on('data', (chunk) => {
+          size += chunk.length;
+          if (size > maxBytes) {
+            req.destroy();
+            return fail(httpError(413, `内容过大，超过上限 ${formatBytes(maxBytes)}`, 'TOO_LARGE'));
+          }
+          chunks.push(chunk);
+        });
+        res.on('end', () => {
+          try {
+            const raw = Buffer.concat(chunks);
+            const body = decompress(raw, res.headers['content-encoding']);
+            done({
+              buffer: body,
+              headers: res.headers,
+              status,
+              url: u.href,
+              contentType: String(res.headers['content-type'] || ''),
+            });
+          } catch (e) {
+            fail(e);
+          }
+        });
+        res.on('error', fail);
       };
       const useMergedOptions = plan && plan.target && typeof plan.target === 'object' && !(plan.target instanceof URL);
       const req = useMergedOptions
@@ -212,7 +212,7 @@ function fetchBuffer(inputUrl, opts) {
         else if (code === 'ECONNRESET') msg = `连接被重置：${u.host}`;
         else if (code === 'CERT_HAS_EXPIRED' || code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
           msg = `TLS 证书校验失败：${code}（可在连接设置中启用「忽略证书校验」）`;
-        } else msg = `网络错误${code ? '（' + code + '）' : ''}：${e.message}`;
+        } else msg = `网络错误${code ? `（${code}）` : ''}：${e.message}`;
         fail(httpError(502, msg, 'NETWORK'));
       });
       req.end();

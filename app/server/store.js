@@ -85,7 +85,7 @@ class Store {
       if (!parsed || typeof parsed !== 'object') throw new Error('empty config');
       return parsed;
     } catch (e) {
-      const backup = this.file + '.corrupt-' + Date.now();
+      const backup = `${this.file}.corrupt-${Date.now()}`;
       try {
         fs.renameSync(this.file, backup);
         console.error(`[store] 配置文件损坏，已备份到 ${backup}：${e.message}`);
@@ -264,7 +264,7 @@ class Store {
     this.rev++;
     this.data.updatedAt = nowMs();
     const json = JSON.stringify(this.data, null, 2);
-    const tmp = this.file + '.tmp';
+    const tmp = `${this.file}.tmp`;
     fs.writeFileSync(tmp, json, { encoding: 'utf8', mode: 0o600 });
     try {
       fs.renameSync(tmp, this.file);
@@ -295,7 +295,7 @@ class Store {
     this._saveTimer = setTimeout(() => {
       this._saveTimer = null;
       try { this.save(); } catch (e) {
-        console.error('[store] 延迟写入配置失败：' + e.message);
+        console.error(`[store] 延迟写入配置失败：${e.message}`);
       }
     }, 200);
   }
@@ -306,7 +306,7 @@ class Store {
     clearTimeout(this._saveTimer);
     this._saveTimer = null;
     try { this.save(); } catch (e) {
-      console.error('[store] 退出前写入配置失败：' + e.message);
+      console.error(`[store] 退出前写入配置失败：${e.message}`);
     }
   }
 

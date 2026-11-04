@@ -20,7 +20,7 @@ const pending = new Map();
 function send(method, params) {
   return new Promise((resolve, reject) => {
     const id = nextId++;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('timeout ' + method)); }, 20000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method}`)); }, 20000);
     pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
     ws.send(JSON.stringify({ id, method, params: params || {} }));
   });
@@ -28,12 +28,12 @@ function send(method, params) {
 
 async function evalJs(expression) {
   const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-  if (r.exceptionDetails) throw new Error('page error: ' + JSON.stringify(r.exceptionDetails).slice(0, 400));
+  if (r.exceptionDetails) throw new Error(`page error: ${JSON.stringify(r.exceptionDetails).slice(0, 400)}`);
   return r.result.value;
 }
 
 async function main() {
-  const targets = await (await fetch(CDP + '/json/list')).json();
+  const targets = await (await fetch(`${CDP}/json/list`)).json();
   const page = targets.find((t) => t.type === 'page');
   ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
@@ -47,20 +47,20 @@ async function main() {
   };
 
   await send('Page.enable');
-  await send('Page.navigate', { url: APP + '/#/extras' });
+  await send('Page.navigate', { url: `${APP}/#/extras` });
   await new Promise((r) => setTimeout(r, 2500));
 
   // 卡片上有字幕按钮
-  const btnCount = await evalJs(`document.querySelectorAll('[data-action="extra-subs"]').length`);
+  const btnCount = await evalJs('document.querySelectorAll(\'[data-action="extra-subs"]\').length');
   if (!btnCount) { console.error('✗ 补番卡片没有字幕按钮'); process.exit(1); }
   console.log(`✓ 字幕按钮 ${btnCount} 个`);
 
   // 打开弹窗
-  await evalJs(`document.querySelector('[data-action="extra-subs"]').click(); 'ok'`);
+  await evalJs('document.querySelector(\'[data-action="extra-subs"]\').click(); \'ok\'');
   await new Promise((r) => setTimeout(r, 300));
-  const modalTitle = await evalJs(`document.querySelector('#modal-root .modal-title')?.textContent || ''`);
-  if (!modalTitle.includes('字幕管理')) { console.error('✗ 字幕弹窗未打开: ' + modalTitle); process.exit(1); }
-  console.log('✓ 弹窗打开：' + modalTitle.trim());
+  const modalTitle = await evalJs('document.querySelector(\'#modal-root .modal-title\')?.textContent || \'\'');
+  if (!modalTitle.includes('字幕管理')) { console.error(`✗ 字幕弹窗未打开: ${modalTitle}`); process.exit(1); }
+  console.log(`✓ 弹窗打开：${modalTitle.trim()}`);
 
   // 构造一个 zip 塞进文件输入框（DOM.setFileInputFiles 触发 change）
   const zipPath = path.join(__dirname, '..', '..', 'tmp', 'ui-subs-test.zip');
@@ -83,23 +83,23 @@ async function main() {
     return { rows, chips };
   })()`);
   if (!after.rows.some((n) => n.includes('chs/01.ass'))) {
-    console.error('✗ 上传后列表没有新字幕: ' + JSON.stringify(after));
+    console.error(`✗ 上传后列表没有新字幕: ${JSON.stringify(after)}`);
     process.exit(1);
   }
-  console.log('✓ zip 上传入库（readme.txt 被跳过），列表显示: ' + after.rows.join(' , '));
+  console.log(`✓ zip 上传入库（readme.txt 被跳过），列表显示: ${after.rows.join(' , ')}`);
   if (!after.chips) console.log('! 卡片外挂字幕计数未显示（可能渲染在下个轮询）');
   else console.log('✓ 卡片显示外挂字幕计数');
 
   // 清理演示数据里刚传的字幕，避免污染演示环境
-  await evalJs(`document.querySelector('[data-action="extra-subs-clear"]')?.click(); 'ok'`);
+  await evalJs('document.querySelector(\'[data-action="extra-subs-clear"]\')?.click(); \'ok\'');
   await new Promise((r) => setTimeout(r, 400));
-  await evalJs(`[...document.querySelectorAll('[data-action="confirm-yes"]')].pop()?.click(); 'ok'`);
+  await evalJs('[...document.querySelectorAll(\'[data-action="confirm-yes"]\')].pop()?.click(); \'ok\'');
   await new Promise((r) => setTimeout(r, 1200));
-  const cleared = await evalJs(`document.querySelectorAll('.subs-row').length`);
+  const cleared = await evalJs('document.querySelectorAll(\'.subs-row\').length');
   console.log(`✓ 清空后剩余 ${cleared} 行（应为 0）`);
 
   console.log('\n字幕弹窗浏览器抽查通过');
   process.exit(0);
 }
 
-main().catch((e) => { console.error('✗ ' + e.message); process.exit(1); });
+main().catch((e) => { console.error(`✗ ${e.message}`); process.exit(1); });

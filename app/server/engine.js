@@ -498,7 +498,8 @@ class Engine {
     return item;
   }
 
-  async testQb(input) {    const src = input || {};
+  async testQb(input) {
+    const src = input || {};
     const stored = this.data.qb;
     const baseUrl = src.baseUrl !== undefined ? src.baseUrl : stored.baseUrl;
     const username = src.username !== undefined ? src.username : stored.username;
@@ -651,11 +652,11 @@ class Engine {
     const tags = String(src.tags !== undefined ? src.tags : old.tags || '').trim().slice(0, 200);
     const intervalMin = clampNumber(
       src.intervalMin !== undefined ? src.intervalMin : old.intervalMin,
-      1, 1440, 10
+      1, 1440, 10,
     );
     const maxPerCheck = clampNumber(
       src.maxPerCheck !== undefined ? src.maxPerCheck : old.maxPerCheck,
-      1, 50, 5
+      1, 50, 5,
     );
     const enabled = src.enabled !== undefined ? parseBool(src.enabled, true) : old.enabled !== false;
 
@@ -851,7 +852,7 @@ class Engine {
     const sub = this.findSub(id);
     this.data.subs = this.data.subs.filter((s) => s.id !== id);
     for (const key of Array.from(this.coverCache.keys())) {
-      if (key.startsWith(sub.id + '|')) this.coverCache.delete(key);
+      if (key.startsWith(`${sub.id}|`)) this.coverCache.delete(key);
     }
     this.cache.delete(id);
     this.queue = this.queue.filter((job) => !job.sub || job.sub.id !== id);
@@ -939,7 +940,7 @@ class Engine {
     const filters = compileFilters(
       input && input.include,
       input && input.exclude,
-      input && input.ignoreCase !== false
+      input && input.ignoreCase !== false,
     );
     const feed = await fetchFeed(url, { proxy: this.data.proxy });
     const annotated = this.annotateItems(feed.items, filters, null, null);
@@ -1118,7 +1119,7 @@ class Engine {
     return httpError(
       409,
       `qBittorrent 中已存在相同种子（infohash ${String(hash).slice(0, 12)}…），已跳过`,
-      'QB_DUPLICATE'
+      'QB_DUPLICATE',
     );
   }
 
@@ -1160,7 +1161,7 @@ class Engine {
     let fetchError = null;
     try {
       let referer = '';
-      try { referer = new URL(torrentUrl).origin + '/'; } catch { /* ignore */ }
+      try { referer = `${new URL(torrentUrl).origin}/`; } catch { /* ignore */ }
       const res = await fetchBuffer(torrentUrl, {
         timeout: 30000,
         maxBytes: 12 * 1024 * 1024,
@@ -1189,7 +1190,7 @@ class Engine {
           throw httpError(
             502,
             `下载到的种子文件无效（${buffer.length} 字节），交给 qBittorrent 直接抓取也失败：${e2.message}`,
-            'DOWNLOAD_FAILED'
+            'DOWNLOAD_FAILED',
           );
         }
       }
@@ -1235,7 +1236,7 @@ class Engine {
           throw httpError(
             502,
             `${e.message}；改用 URL 交给 qBittorrent 也失败：${e2.message}`,
-            'QB_REJECTED'
+            'QB_REJECTED',
           );
         }
       }
@@ -1248,7 +1249,7 @@ class Engine {
       throw httpError(
         502,
         `获取种子失败：${fetchError ? fetchError.message : '未知错误'}；交由 qBittorrent 直接下载也失败：${e2.message}`,
-        'DOWNLOAD_FAILED'
+        'DOWNLOAD_FAILED',
       );
     }
   }
@@ -1261,7 +1262,7 @@ class Engine {
     const existing = options.force ? null : this.data.downloads.find(
       (d) => d.torrentUrl === item.torrentUrl &&
         d.dedupe !== false &&
-        (d.status === 'ok' || (d.status === 'pending' && nowMs() - Number(d.createdAt || 0) < 10 * 60000))
+        (d.status === 'ok' || (d.status === 'pending' && nowMs() - Number(d.createdAt || 0) < 10 * 60000)),
     );
     if (existing) {
       return { status: 'duplicate', error: '相同地址已提交过，已跳过' };
@@ -1328,7 +1329,7 @@ class Engine {
   async downloadFromSub(subId, key, opts) {
     const sub = this.findSub(subId);
     if (!key) throw badRequest('缺少条目 key', 'EMPTY_KEY');
-    let cached = this.cache.get(subId);
+    const cached = this.cache.get(subId);
     let item = cached ? cached.items.find((it) => it.key === key) : null;
     if (!item) {
       const filters = compileFilters(sub.include, sub.exclude, sub.ignoreCase);
@@ -1366,7 +1367,7 @@ class Engine {
     if (!record) throw httpError(404, '下载记录不存在', 'DOWNLOAD_NOT_FOUND');
     if (record.status === 'pending') throw httpError(409, '该记录正在提交中', 'ALREADY_PENDING');
     const duplicate = this.data.downloads.find(
-      (d) => d.id !== record.id && d.torrentUrl === record.torrentUrl && d.status === 'ok' && d.dedupe !== false
+      (d) => d.id !== record.id && d.torrentUrl === record.torrentUrl && d.status === 'ok' && d.dedupe !== false,
     );
     if (duplicate) {
       throw httpError(409, '相同地址已有一条成功记录，无需重试', 'DUPLICATE');
@@ -1468,7 +1469,7 @@ class Engine {
   start() {
     if (this.timer) return;
     this.timer = setInterval(() => {
-      try { this.tick(); } catch (e) { this.log('error', '调度器异常：' + e.message); }
+      try { this.tick(); } catch (e) { this.log('error', `调度器异常：${e.message}`); }
     }, 15000);
     // 补番硬链接巡检：只扫等着链接的记录，下载完成后自动执行
     this.hardlinkTimer = setInterval(() => {
@@ -1681,7 +1682,7 @@ class Engine {
         feed = await this.searchFetch(
           url,
           () => fetchFeed(url, { timeout: 20000, deadline: SEARCH_FEED_DEADLINE, proxy: this.data.proxy }),
-          'high'
+          'high',
         );
       } catch (e) {
         lastError = e;
@@ -2959,6 +2960,7 @@ class Engine {
     const e = x || {};
     const hl = e.hardlink && typeof e.hardlink === 'object' ? e.hardlink : {};
     const clampOffset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+    // eslint-disable-next-line no-unused-vars -- 故意从 rest 中剥离 qB 运行快照
     const { qb, ...rest } = e; // qB 运行快照不跨机器迁移
     return {
       ...rest,

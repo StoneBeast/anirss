@@ -17,14 +17,14 @@ const pending = new Map();
 function send(method, params) {
   return new Promise((resolve, reject) => {
     const id = nextId++;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('timeout ' + method)); }, 15000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method}`)); }, 15000);
     pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
     ws.send(JSON.stringify({ id, method, params: params || {} }));
   });
 }
 
 async function main() {
-  const targets = await (await fetch(CDP + '/json/list')).json();
+  const targets = await (await fetch(`${CDP}/json/list`)).json();
   const page = targets.find((t) => t.type === 'page');
   ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
@@ -38,7 +38,7 @@ async function main() {
   };
 
   await send('Page.enable');
-  await send('Page.navigate', { url: APP + '/#/downloads' });
+  await send('Page.navigate', { url: `${APP}/#/downloads` });
   await new Promise((r) => setTimeout(r, 2500));
 
   // 行上有 data-key

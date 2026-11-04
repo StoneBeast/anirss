@@ -146,7 +146,7 @@ function tarEntryName(buf, header) {
   const magic = buf.subarray(header + 257, header + 263).toString('latin1');
   if (magic.startsWith('ustar')) {
     const prefix = buf.subarray(header + 345, header + 500).toString('utf8').replace(/\0+$/, '');
-    if (prefix) name = prefix + '/' + name;
+    if (prefix) name = `${prefix}/${name}`;
   }
   return name;
 }
@@ -172,7 +172,7 @@ function extractTarData(buf) {
     }
     if (type === 'x' || type === 'g') continue; // pax 头，忽略
 
-    let name = pendingLongName || tarEntryName(buf, header);
+    const name = pendingLongName || tarEntryName(buf, header);
     pendingLongName = '';
     if (type === '5') continue; // 目录：保留在条目名里即可，不需要单独入列
     const rel = sanitizeEntryName(name);
@@ -191,7 +191,7 @@ function extractTar(buf, gzipped) {
     try {
       data = zlib.gunzipSync(buf);
     } catch (e) {
-      throw badRequest('gzip 解压失败：' + e.message, 'ARCHIVE_DECOMPRESS');
+      throw badRequest(`gzip 解压失败：${e.message}`, 'ARCHIVE_DECOMPRESS');
     }
   }
   return extractTarData(data);

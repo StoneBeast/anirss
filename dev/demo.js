@@ -113,7 +113,7 @@ const QB_ACTIVE = [
 
 async function startQb() {
   return startServer(async (req, res) => {
-    const u = new URL(req.url, 'http://127.0.0.1:' + QB_PORT);
+    const u = new URL(req.url, `http://127.0.0.1:${QB_PORT}`);
     const p = u.pathname;
     if (p === '/api/v2/auth/login') {
       const body = (await readBody(req)).toString();
@@ -200,20 +200,21 @@ function subgroupRows(count, label, baseMB, batch) {
   let out = '';
   for (let i = 1; i <= count; i++) {
     const ep = String(i).padStart(2, '0');
-    out += `<tr><td><input type="checkbox" class="js-episode-select" /></td>`
+    out += '<tr><td><input type="checkbox" class="js-episode-select" /></td>'
       + `<td><a class="magnet-link-wrap" href="/Home/Episode/${String(i).padStart(40, 'a')}">`
       + `【${label}】药屋少女的呢喃 [${ep}] [1080p]</a></td>`
       + `<td>${(baseMB || 780) + i * 2} MB</td></tr>`;
   }
   if (batch) {
-    out += `<tr><td><input type="checkbox" class="js-episode-select" /></td>`
+    out += '<tr><td><input type="checkbox" class="js-episode-select" /></td>'
       + `<td><a class="magnet-link-wrap" href="/Home/Episode/${'b'.repeat(40)}">`
       + `【${label}】药屋少女的呢喃 [01-12][合集] [1080p]</a></td><td>9.8 GB</td></tr>`;
   }
   return out;
 }
 
-function coverSvg(label, color) {  const safe = String(label || '').replace(/[<>&"]/g, '');
+function coverSvg(label, color) {
+  const safe = String(label || '').replace(/[<>&"]/g, '');
   return `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="160" viewBox="0 0 120 160">
     <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${color}"/><stop offset="1" stop-color="#1b2a4a"/></linearGradient></defs>
     <rect width="120" height="160" fill="url(#g)"/>
@@ -223,7 +224,7 @@ function coverSvg(label, color) {  const safe = String(label || '').replace(/[<>
 
 async function startRss() {
   return startServer((req, res) => {
-    const u = new URL(req.url, 'http://127.0.0.1:' + RSS_PORT);
+    const u = new URL(req.url, `http://127.0.0.1:${RSS_PORT}`);
     if (u.pathname === '/rss/kusuriya') {
       return text(res, rssXml('Mikan · 药屋少女的呢喃', KUSURIYA_ITEMS), 200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
     }
@@ -342,7 +343,7 @@ function writeConfig() {
     createdAt: NOW - 30 * 86400_000,
     updatedAt: NOW,
     qb: {
-      baseUrl: 'http://127.0.0.1:' + QB_PORT,
+      baseUrl: `http://127.0.0.1:${QB_PORT}`,
       username: 'admin',
       password: 'secret',
       skipTlsVerify: false,
@@ -350,7 +351,7 @@ function writeConfig() {
       lastTest: {
         at: NOW - 60_000,
         ok: true,
-        baseUrl: 'http://127.0.0.1:' + QB_PORT,
+        baseUrl: `http://127.0.0.1:${QB_PORT}`,
         version: 'v5.0.2',
         webapi: '2.11.2',
         defaultSavePath: '/volume1/downloads',
@@ -359,7 +360,7 @@ function writeConfig() {
     },
     bases: [
       { id: 'b_mikan', name: 'Mikan', url: 'https://mikanime.tv', note: '蜜柑计划 · 默认站点', createdAt: NOW - 30 * 86400_000 },
-      { id: 'b_demo', name: '本地演示 RSS', url: 'http://127.0.0.1:' + RSS_PORT, note: '演示用，含测试条目', createdAt: NOW - 20 * 86400_000 },
+      { id: 'b_demo', name: '本地演示 RSS', url: `http://127.0.0.1:${RSS_PORT}`, note: '演示用，含测试条目', createdAt: NOW - 20 * 86400_000 },
     ],
     hardlink: {
       mode: 'season',
@@ -392,7 +393,7 @@ function writeConfig() {
         intervalMin: 10,
         maxPerCheck: 5,
         enabled: true,
-        seen: Object.fromEntries(Array.from({ length: 128 }, (_, i) => ['seed-frieren-' + i, NOW - i * 1800_000])),
+        seen: Object.fromEntries(Array.from({ length: 128 }, (_, i) => [`seed-frieren-${i}`, NOW - i * 1800_000])),
         needsSeed: false,
         totalDownloads: 18,
         lastDownloadAt: NOW - 2 * 60_000,
@@ -400,7 +401,7 @@ function writeConfig() {
         lastRunAt: NOW - 4 * 60_000,
         meta: {
           homeUrl: 'https://mikanime.tv/Home/Bangumi/3870',
-          cover: 'http://127.0.0.1:' + RSS_PORT + '/cover/frieren.svg',
+          cover: `http://127.0.0.1:${RSS_PORT}/cover/frieren.svg`,
           title: '葬送的芙莉莲',
           bgmUrl: 'https://bgm.tv/subject/400602',
           bgmId: '400602',
@@ -416,7 +417,7 @@ function writeConfig() {
       {
         id: 's_kusuriya',
         name: '药屋少女的呢喃 · 1080P',
-        url: 'http://127.0.0.1:' + RSS_PORT + '/rss/kusuriya',
+        url: `http://127.0.0.1:${RSS_PORT}/rss/kusuriya`,
         baseId: 'b_demo',
         path: '/rss/kusuriya',
         include: '1080p|1080P',
@@ -436,7 +437,7 @@ function writeConfig() {
         lastRunAt: NOW - 2 * 60_000,
         meta: {
           homeUrl: 'https://mikanime.tv/Home/Bangumi/4014',
-          cover: 'http://127.0.0.1:' + RSS_PORT + '/cover/kusuriya.svg',
+          cover: `http://127.0.0.1:${RSS_PORT}/cover/kusuriya.svg`,
           title: '药屋少女的呢喃',
           bgmUrl: 'https://bgm.tv/subject/382179',
           bgmId: '382179',
@@ -453,7 +454,7 @@ function writeConfig() {
       {
         id: 's_movie',
         name: '剧场版 / OVA 收藏',
-        url: 'http://127.0.0.1:' + RSS_PORT + '/rss/movie',
+        url: `http://127.0.0.1:${RSS_PORT}/rss/movie`,
         baseId: 'b_demo',
         path: '/rss/movie',
         include: '1080p',
@@ -477,7 +478,7 @@ function writeConfig() {
       {
         id: 's_broken',
         name: '迷宫饭 · 第二季（源异常示例）',
-        url: 'http://127.0.0.1:' + RSS_PORT + '/rss/broken',
+        url: `http://127.0.0.1:${RSS_PORT}/rss/broken`,
         baseId: 'b_demo',
         path: '/rss/broken',
         include: '1080p',
@@ -504,7 +505,7 @@ function writeConfig() {
         id: 'x_demo_1',
         name: '[Lilith-Raws] 药屋少女的呢喃 - 19 [Baha][WEB-DL][1080p][AVC AAC][CHT][MP4]',
         source: 'magnet',
-        magnet: 'magnet:?xt=urn:btih:' + 'e1'.padEnd(40, '0') + '&dn=extra-demo-1',
+        magnet: `magnet:?xt=urn:btih:${'e1'.padEnd(40, '0')}&dn=extra-demo-1`,
         hash: 'e1'.padEnd(40, '0'),
         fileName: '',
         savePath: '/volume1/media/anime/药屋少女的呢喃',
@@ -553,7 +554,7 @@ function writeConfig() {
         id: 'x_demo_3',
         name: '[SubsPlease] 某剧场版 [1080p][BDRip]',
         source: 'magnet',
-        magnet: 'magnet:?xt=urn:btih:' + 'e3'.padEnd(40, '2') + '&dn=movie-demo',
+        magnet: `magnet:?xt=urn:btih:${'e3'.padEnd(40, '2')}&dn=movie-demo`,
         hash: 'e3'.padEnd(40, '2'),
         fileName: '',
         savePath: '/volume1/media/movies',
@@ -569,7 +570,7 @@ function writeConfig() {
         id: 'x_demo_4',
         name: '某失效磁力示例',
         source: 'magnet',
-        magnet: 'magnet:?xt=urn:btih:' + 'e4'.padEnd(40, '3') + '&dn=broken',
+        magnet: `magnet:?xt=urn:btih:${'e4'.padEnd(40, '3')}&dn=broken`,
         hash: 'e4'.padEnd(40, '3'),
         fileName: '',
         savePath: '',
@@ -593,7 +594,7 @@ function writeConfig() {
       {
         id: 'd_2', subId: 's_kusuriya', subName: '药屋少女的呢喃 · 1080P',
         itemKey: 'demo-kusuriya-1', title: KUSURIYA_ITEMS[0].title,
-        torrentUrl: 'http://127.0.0.1:' + RSS_PORT + '/torrents/demo-kusuriya-1.torrent',
+        torrentUrl: `http://127.0.0.1:${RSS_PORT}/torrents/demo-kusuriya-1.torrent`,
         savePath: '/volume1/media/anime/药屋少女的呢喃', category: 'anime', tags: '1080p',
         mode: 'file', status: 'ok', error: '', createdAt: NOW - 6 * 60_000, updatedAt: NOW - 6 * 60_000,
       },
@@ -615,14 +616,14 @@ function writeConfig() {
       {
         id: 'd_5', subId: 's_movie', subName: '剧场版 / OVA 收藏',
         itemKey: 'demo-movie-1', title: MOVIE_ITEMS[0].title,
-        torrentUrl: 'http://127.0.0.1:' + RSS_PORT + '/torrents/demo-movie-1.torrent',
+        torrentUrl: `http://127.0.0.1:${RSS_PORT}/torrents/demo-movie-1.torrent`,
         savePath: '/volume1/media/movies', category: 'movie', tags: '剧场版',
         mode: 'file', status: 'ok', error: '', createdAt: NOW - 26 * 3600_000, updatedAt: NOW - 26 * 3600_000,
       },
       {
         id: 'd_6', subId: 's_kusuriya', subName: '药屋少女的呢喃 · 1080P',
         itemKey: 'demo-kusuriya-2', title: KUSURIYA_ITEMS[1].title,
-        torrentUrl: 'http://127.0.0.1:' + RSS_PORT + '/torrents/demo-kusuriya-2.torrent',
+        torrentUrl: `http://127.0.0.1:${RSS_PORT}/torrents/demo-kusuriya-2.torrent`,
         savePath: '/volume1/media/anime/药屋少女的呢喃', category: 'anime', tags: '1080p',
         mode: 'file', status: 'duplicate', error: '相同地址已提交过，已跳过', createdAt: NOW - 120 * 60_000, updatedAt: NOW - 120 * 60_000,
       },
@@ -647,9 +648,9 @@ function writeConfig() {
   seedDownloadFiles();
   const qb = await startQb();
   const rss = await startRss();
-  console.log('[demo] mock qBittorrent on http://127.0.0.1:' + QB_PORT);
-  console.log('[demo] mock RSS on http://127.0.0.1:' + RSS_PORT);
-  console.log('[demo] 现在启动 anirss：ANIRSS_DATA="' + DATA_DIR + '" ANIRSS_PORT=8777 node app/server/index.js');
+  console.log(`[demo] mock qBittorrent on http://127.0.0.1:${QB_PORT}`);
+  console.log(`[demo] mock RSS on http://127.0.0.1:${RSS_PORT}`);
+  console.log(`[demo] 现在启动 anirss：ANIRSS_DATA="${DATA_DIR}" ANIRSS_PORT=8777 node app/server/index.js`);
   const stop = () => {
     qb.close();
     rss.close();

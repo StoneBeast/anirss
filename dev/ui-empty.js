@@ -11,11 +11,10 @@ fs.mkdirSync(OUT, { recursive: true });
 let ws;
 let nextId = 1;
 const pending = new Map();
-const waiters = new Map();
 const errors = [];
 
 async function main() {
-  const targets = await (await fetch(CDP + '/json/list')).json();
+  const targets = await (await fetch(`${CDP}/json/list`)).json();
   const page = targets.find((t) => t.type === 'page');
   ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
@@ -40,17 +39,12 @@ async function main() {
   };
   const send = (method, params) => new Promise((resolve, reject) => {
     const id = nextId++;
-    const timer = setTimeout(() => reject(new Error('timeout ' + method)), 20000);
+    const timer = setTimeout(() => reject(new Error(`timeout ${method}`)), 20000);
     pending.set(id, {
       resolve: (v) => { clearTimeout(timer); resolve(v); },
       reject: (e) => { clearTimeout(timer); reject(e); },
     });
     ws.send(JSON.stringify({ id, method, params: params || {} }));
-  });
-  const waitEvent = (method) => new Promise((resolve) => {
-    const list = waiters.get(method) || [];
-    list.push({ resolve });
-    waiters.set(method, list);
   });
   const evaluate = async (expression) => {
     const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
@@ -63,7 +57,7 @@ async function main() {
   await send('Network.enable');
   await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
-  await send('Page.navigate', { url: APP + '/?empty=' + Date.now() + '#/overview' });
+  await send('Page.navigate', { url: `${APP}/?empty=${Date.now()}#/overview` });
   await new Promise((r) => setTimeout(r, 1800));
   errors.length = 0;
 
