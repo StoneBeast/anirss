@@ -195,6 +195,7 @@ docker run -d --name anirss -p 8777:8777 -v "$PWD/data:/data" anirss:local
 node dev/unit.js        # 单元测试
 node dev/smoke.js       # 端到端烟测，内置假 qB 和假 RSS
 node dev/demo.js        # 生成演示数据
+npm install && npm run lint   # 代码风格检查（ESLint + Stylelint，Node ≥ 20.19）
 ```
 
 打包、目录结构和接口清单见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。

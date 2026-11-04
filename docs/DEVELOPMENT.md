@@ -11,8 +11,8 @@
 ## 测试
 
 ```bash
-node dev/unit.js        # 单元测试（29 项）：RSS 2.0 / Atom、实体解码、正则、URL 拼接、infohash、集数识别、硬链接规划
-node dev/smoke.js       # 端到端烟测（46 项）：拉起真实服务 + 内置假 qBittorrent / 假 RSS 站点
+node dev/unit.js        # 单元测试（31 项）：RSS 2.0 / Atom、实体解码、正则、URL 拼接、infohash、集数识别、硬链接规划、导入导出
+node dev/smoke.js       # 端到端烟测（54 项）：拉起真实服务 + 内置假 qBittorrent / 假 RSS 站点
 node dev/perf-check.js  # 性能行为验证：静态资源与 /api/state 的 gzip、ETag/304、写盘合并
 node dev/ui-actions.js  # 浏览器交互测试（75 项）：需要 Chrome CDP 9222 + 演示实例 8777
 node dev/ui-subs-check.js # 字幕弹窗抽查：弹窗打开、zip 上传入库、列表刷新（同上前提）
@@ -140,6 +140,21 @@ python dev/pack-dev.py anirss.fpk anirss-dev.fpk --version 1.13.917
 ### 发布注意
 
 > ⚠️ `manifest` 里**不要**再写 `disable_authorization_path = true`。这一行会隐藏 fnOS「应用设置 → 访问权限」，而补番硬链接需要用户在那里授权 qB 下载目录与目标目录（应用以独立用户 `anirss` 运行，未授权时读不到文件）。`config/resource` 的 `data-share` 保持为空即可，用户通过「访问权限 → 添加」自行授权任意目录。
+
+## 代码风格（Lint）
+
+风格用 ESLint（JS）+ Stylelint（CSS）固化成规则，改完代码跑一遍再提交：
+
+```bash
+npm install         # 安装 lint 工具链（devDependencies，不进发布包）
+npm run lint        # 检查
+npm run lint:fix    # 自动修复大部分问题
+```
+
+- 配置在 `eslint.config.js` / `stylelint.config.js`（平面配置），规则按仓库现状实测选定，不是预设模板
+- JS 基线：2 空格缩进、单引号、始终分号、多行尾逗号、`const` 优先、模板字面量；CSS：属性选择器双引号、`rgb()` 逗号记法、keyframes kebab-case
+- 环境分工：`app/server` 与 `dev/` 走 Node 全局，`app/www` 走浏览器全局
+- 应用本体保持零运行时依赖，`node app/server/index.js` 直接跑；**Node 版本**：ESLint 10 要求 ≥ 20.19，别用 18.x 跑 `npm run lint`（应用运行不受影响）
 
 ## 目录结构
 
