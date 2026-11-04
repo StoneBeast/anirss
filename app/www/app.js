@@ -2916,7 +2916,7 @@
     }
     const ok = await askConfirm({
       title: '导入配置',
-      message: `会用「${file.name}」里的内容覆盖当前的存储路径、追番和补番记录（${S.data.subs.length} 个追番 → 导入文件的条数）。\n站点为应用内置（蜜柑计划 / 蜜柑计划(境外)），不受导入影响；qBittorrent 与代理的密码不会从文件读取，导入后需要重新填写。建议先导出当前的配置作为备份。`,
+      message: `会用「${file.name}」里的内容覆盖当前的存储路径、追番和补番记录（${S.data.subs.length} 个追番 → 导入文件的条数）。\n站点为应用内置（蜜柑计划 / 蜜柑计划(境外)），不受导入影响；导出文件不含 qBittorrent 与代理的密码，导入时会保留本机已保存的密码。建议先导出当前的配置作为备份。`,
       confirmText: '覆盖导入',
       danger: true,
     });

@@ -689,6 +689,97 @@ test('硬链接：正片/字幕识别与规划', () => {
     }
   });
 
+  test('导入配置：qB 地址规范化 / 清验证状态 / 保留本机密码（qB 与代理）', () => {
+    const { Store } = require('../app/server/store');
+    const { Engine } = require('../app/server/engine');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'anirss-imp-'));
+    const origLog = console.log;
+    try {
+      const store = new Store(path.join(dir, 'config.json'));
+      store.data.qb = {
+        baseUrl: 'http://old.local:8080',
+        username: 'old',
+        password: 'qb-secret',
+        skipTlsVerify: false,
+        verifiedAt: 1700000000000,
+        lastTest: { ok: true, at: 1700000000000, baseUrl: 'http://old.local:8080' },
+      };
+      store.data.proxy = normalizeProxy({
+        enabled: false, type: 'http', host: '10.0.0.1', port: 7890, username: 'u', password: 'proxy-secret',
+      });
+      store.data.extras = [{
+        id: 'x_import',
+        name: '补番样本',
+        source: 'magnet',
+        hash: 'a'.repeat(40),
+        createdAt: 1700000000000,
+        qb: { hash: 'a'.repeat(40), progress: 1, at: 1700000000000 },
+        hardlink: { dest: '/media/${name}', season: 2, done: true, attempts: 3, retryAt: 1700000600000, files: 12, linked: 12, error: 'old' },
+      }];
+      console.log = () => {};
+      const engine = new Engine(store);
+      engine.qbClient = { fake: true };
+      engine.qbClientKey = 'stale';
+
+      engine.importConfig({
+        qb: { baseUrl: 'new.local:9000/', username: 'new', skipTlsVerify: true },
+        proxy: { enabled: false, type: 'http', host: '10.0.0.2', port: 7891, username: 'u' },
+      });
+
+      assert.strictEqual(store.data.qb.baseUrl, 'http://new.local:9000', '地址应补协议并去掉尾斜杠');
+      assert.strictEqual(store.data.qb.username, 'new');
+      assert.strictEqual(store.data.qb.password, 'qb-secret', '导入未带密码时保留本机 qB 密码');
+      assert.strictEqual(store.data.qb.verifiedAt, 0, '导入后应清掉旧验证时间');
+      assert.strictEqual(store.data.qb.lastTest, null, '导入后应清掉旧测试结果');
+      assert.strictEqual(engine.qbClient, null, '导入后应重置 qB 客户端');
+
+      assert.strictEqual(store.data.proxy.host, '10.0.0.2');
+      assert.strictEqual(store.data.proxy.port, 7891);
+      assert.strictEqual(store.data.proxy.password, 'proxy-secret', '导入未带密码时保留本机代理密码');
+
+      // 密码既不导出，也不从导入文件读取：文件里塞密码也不能覆盖本机
+      const exported = engine.exportConfig();
+      assert.strictEqual(exported.qb.password, undefined, '导出不应包含 qB 密码');
+      assert.strictEqual(exported.proxy.password, undefined, '导出不应包含代理密码');
+      assert.strictEqual(exported.proxy.hasPassword, true, '导出只回传 hasPassword');
+      assert.strictEqual(exported.extras[0].qb, undefined, '导出不应包含 qB 运行快照');
+      assert.strictEqual(exported.extras[0].hardlink.done, undefined, '导出不应包含硬链接完成标记');
+      assert.strictEqual(exported.extras[0].hardlink.retryAt, undefined, '导出不应包含硬链接重试时间');
+      assert.strictEqual(exported.extras[0].hardlink.dest, '/media/${name}', '硬链接目标应保留');
+      assert.strictEqual(exported.extras[0].hardlink.season, 2);
+      engine.importConfig({
+        qb: { baseUrl: 'http://new.local:9000', password: 'file-qb-pass' },
+        proxy: { enabled: false, type: 'http', host: '10.0.0.2', port: 7891, password: 'file-proxy-pass' },
+      });
+      assert.strictEqual(store.data.qb.password, 'qb-secret', '导入文件里的 qB 密码应被忽略');
+      assert.strictEqual(store.data.proxy.password, 'proxy-secret', '导入文件里的代理密码应被忽略');
+
+      // 导入同样丢弃运行态，避免旧备份把「已完成 / 重试时间」带回来
+      engine.importConfig({
+        extras: [{
+          id: 'x_import',
+          name: '补番样本',
+          source: 'magnet',
+          hash: 'a'.repeat(40),
+          createdAt: 1700000000000,
+          qb: { progress: 1 },
+          hardlink: { dest: '/media/${name}', season: 2, done: true, attempts: 3, retryAt: 1700000600000 },
+        }],
+      });
+      const importedExtra = store.data.extras[0];
+      assert.strictEqual(importedExtra.qb, null, '导入应丢弃 qB 运行快照');
+      assert.strictEqual(importedExtra.hardlink.done, false, '导入应重置硬链接完成标记');
+      assert.strictEqual(importedExtra.hardlink.retryAt, 0, '导入应重置硬链接重试时间');
+      assert.strictEqual(importedExtra.hardlink.dest, '/media/${name}', '硬链接目标应保留');
+
+      assert.throws(() => engine.importConfig({ qb: { baseUrl: 'ftp://bad.local' } }), /http/);
+      assert.strictEqual(store.data.qb.baseUrl, 'http://new.local:9000', '非法地址不应改动现有配置');
+    } finally {
+      console.log = origLog;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   console.log(`\n单元测试全部通过（${passed} 项）`);
 })().catch((e) => {
   console.error(e && e.stack ? e.stack : e);

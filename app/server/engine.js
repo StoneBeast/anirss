@@ -2889,17 +2889,25 @@ class Engine {
     if (Array.isArray(src.bases)) { this.data.bases = src.bases; counts.bases = src.bases.length; }
     if (Array.isArray(src.paths)) { this.data.paths = src.paths; counts.paths = src.paths.length; }
     if (Array.isArray(src.subs)) { this.data.subs = src.subs; counts.subs = src.subs.length; }
-    if (Array.isArray(src.extras)) { this.data.extras = src.extras; counts.extras = src.extras.length; }
+    if (Array.isArray(src.extras)) { this.data.extras = src.extras.map((x) => this.portableExtra(x)); counts.extras = src.extras.length; }
     if (src.qb && typeof src.qb === 'object') {
       const qb = this.data.qb;
-      if (src.qb.baseUrl) qb.baseUrl = String(src.qb.baseUrl);
-      if (src.qb.username !== undefined) qb.username = String(src.qb.username || '');
+      // 地址与「保存连接设置」走同一套校验/规范化，避免导入文件里的歪地址原样落库
+      if (src.qb.baseUrl) qb.baseUrl = normalizeBaseUrl(src.qb.baseUrl);
+      if (src.qb.username !== undefined) qb.username = String(src.qb.username || '').slice(0, 120);
       if (src.qb.skipTlsVerify !== undefined) qb.skipTlsVerify = !!src.qb.skipTlsVerify;
-      if (typeof src.qb.password === 'string' && src.qb.password) qb.password = src.qb.password;
+      // 密码不从导入文件读取：始终保留本机已保存的密码
+      // 导入的可能是另一台机器的配置：旧的「已验证 / 上次测试」不能沿用
+      qb.verifiedAt = 0;
+      qb.lastTest = null;
       counts.qb = 1;
     }
     if (src.proxy && typeof src.proxy === 'object') {
-      this.data.proxy = normalizeProxy(src.proxy);
+      // 密码不从导入文件读取：始终沿用本机已保存的密码
+      const incoming = Object.assign({}, src.proxy, { password: this.data.proxy.password });
+      const nextProxy = normalizeProxy(incoming, this.data.proxy);
+      this.data.proxy = nextProxy;
+      setProxy(nextProxy); // 立即生效，别等到重启
       counts.proxy = 1;
     }
     if (src.hardlink && typeof src.hardlink === 'object') {
@@ -2926,6 +2934,8 @@ class Engine {
     this.homeMetaCache.clear();
     this.searchJobs.clear();
     this.searchFeedCache.clear();
+    // qB 连接信息可能整体换了一台机器，清掉旧客户端与状态缓存
+    this.resetQb();
     this.store.save();
     this.log('info', `已导入配置：站点 ${counts.bases || 0}、路径 ${counts.paths || 0}、追番 ${counts.subs || 0}、补番 ${counts.extras || 0}`);
     return {
@@ -2937,7 +2947,29 @@ class Engine {
         subs: this.data.subs.length,
         extras: this.data.extras.length,
       },
-      note: '为了安全，qBittorrent 与代理的密码没有导入，请到「连接设置」确认。',
+      note: '出于安全考虑，导入不会读取 qBittorrent 与代理的密码，已保留本机原有的密码。',
+    };
+  }
+
+  /**
+   * 补番记录的「可迁移」形态：只保留配置，丢掉与本机 qBittorrent / 硬链接进度绑定的运行态。
+   * 导出与导入共用，避免旧备份或手工文件把 qB 快照、已完成标记带回来。
+   */
+  portableExtra(x) {
+    const e = x || {};
+    const hl = e.hardlink && typeof e.hardlink === 'object' ? e.hardlink : {};
+    const clampOffset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
+    const { qb, ...rest } = e; // qB 运行快照不跨机器迁移
+    return {
+      ...rest,
+      hardlink: {
+        dest: String(hl.dest || ''),
+        season: Math.max(0, Math.min(999, Number(hl.season) || 0)),
+        enabled: hl.enabled !== false,
+        rename: !!hl.rename,
+        offset: clampOffset(hl.offset),
+        subOffset: hl.subOffset == null || hl.subOffset === '' ? null : clampOffset(hl.subOffset),
+      },
     };
   }
 
@@ -2946,7 +2978,7 @@ class Engine {
       app: 'anirss',
       version: APP_VERSION,
       exportedAt: new Date().toISOString(),
-      note: '站点为应用内置，不包含在导出中；不包含 qBittorrent 密码与代理密码，导入后请重新填写。',
+      note: '站点为应用内置，不包含在导出中；出于安全考虑，不包含 qBittorrent 与代理的密码，导入时会保留本机已保存的密码。',
       qb: {
         baseUrl: this.data.qb.baseUrl,
         username: this.data.qb.username,
@@ -2956,7 +2988,7 @@ class Engine {
       hardlink: this.publicHardlinkConfig(),
       paths: this.data.paths,
       subs: this.data.subs,
-      extras: this.data.extras,
+      extras: this.data.extras.map((x) => this.portableExtra(x)),
     };
   }
 }
