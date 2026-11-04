@@ -154,6 +154,7 @@ npm run lint:fix    # 自动修复大部分问题
 - 配置在 `eslint.config.js` / `stylelint.config.js`（平面配置），规则按仓库现状实测选定，不是预设模板
 - JS 基线：2 空格缩进、单引号、始终分号、多行尾逗号、`const` 优先、模板字面量；CSS：属性选择器双引号、`rgb()` 逗号记法、keyframes kebab-case
 - 环境分工：`app/server` 与 `dev/` 走 Node 全局，`app/www` 走浏览器全局
+- CI 同样跑 `npm run lint`（Node 24），风格问题在合并前就被拦下
 - 应用本体保持零运行时依赖，`node app/server/index.js` 直接跑；**Node 版本**：ESLint 10 要求 ≥ 20.19，别用 18.x 跑 `npm run lint`（应用运行不受影响）
 
 ## 目录结构

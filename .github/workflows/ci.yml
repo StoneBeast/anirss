@@ -1,7 +1,7 @@
 name: CI
 
-# 每次推到 main / PR 都会跑：单元测试、烟测、性能自检，并真的构建一次 FPK，
-# 保证「能打包」这件事在合并前就被验证过。
+# 每次推到 main / PR 都会跑：代码风格、单元测试、烟测、性能自检，并真的构建一次 FPK，
+# 保证「风格统一」和「能打包」在合并前就被验证过。
 on:
   push:
     branches: [main]
@@ -16,6 +16,23 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: 代码风格（Lint）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ESLint 10 要求 Node ≥ 20.19，固定 24（与 fnOS 应用市场同款大版本）
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: ESLint + Stylelint
+        run: npm run lint
+
   test:
     name: 测试（Node ${{ matrix.node }}）
     runs-on: ubuntu-latest
