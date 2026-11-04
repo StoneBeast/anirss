@@ -23,7 +23,7 @@ const pass = [];
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function connect() {
-  const targets = await (await fetch(CDP + '/json/list')).json();
+  const targets = await (await fetch(`${CDP}/json/list`)).json();
   const page = targets.find((t) => t.type === 'page');
   ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
@@ -43,13 +43,13 @@ async function connect() {
     const waiters = eventWaiters.get(msg.method);
     if (waiters && waiters.length) waiters.shift().resolve(msg.params);
     if (msg.method === 'Runtime.exceptionThrown') {
-      errors.push('EXCEPTION: ' + (msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text));
+      errors.push(`EXCEPTION: ${msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text}`);
     }
     if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
-      errors.push('CONSOLE: ' + msg.params.args.map((a) => a.value || a.description || '').join(' '));
+      errors.push(`CONSOLE: ${msg.params.args.map((a) => a.value || a.description || '').join(' ')}`);
     }
     if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
-      errors.push('LOG: ' + msg.params.entry.text);
+      errors.push(`LOG: ${msg.params.entry.text}`);
     }
   };
 }
@@ -59,7 +59,7 @@ function send(method, params) {
     const id = nextId++;
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error('CDP timeout: ' + method));
+      reject(new Error(`CDP timeout: ${method}`));
     }, 30000);
     pending.set(id, {
       resolve: (v) => { clearTimeout(timer); resolve(v); },
@@ -72,7 +72,7 @@ function send(method, params) {
 function waitEvent(method, timeout) {
   return new Promise((resolve, reject) => {
     const list = eventWaiters.get(method) || [];
-    const timer = setTimeout(() => reject(new Error('event timeout: ' + method)), timeout || 15000);
+    const timer = setTimeout(() => reject(new Error(`event timeout: ${method}`)), timeout || 15000);
     const waiter = { resolve: (v) => { clearTimeout(timer); resolve(v); } };
     list.push(waiter);
     eventWaiters.set(method, list);
@@ -91,7 +91,7 @@ async function ev(expression) {
 
 async function click(selector, wait) {
   const ok = await ev(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.click(); return true; })()`);
-  if (!ok) throw new Error('找不到点击目标：' + selector);
+  if (!ok) throw new Error(`找不到点击目标：${selector}`);
   await sleep(wait || 600);
 }
 
@@ -104,7 +104,7 @@ async function setValue(selector, value) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   })()`);
-  if (!ok) throw new Error('找不到输入框：' + selector);
+  if (!ok) throw new Error(`找不到输入框：${selector}`);
 }
 
 async function setChecked(selector, value) {
@@ -115,18 +115,18 @@ async function setChecked(selector, value) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   })()`);
-  if (!ok) throw new Error('找不到复选框：' + selector);
+  if (!ok) throw new Error(`找不到复选框：${selector}`);
 }
 
 async function state() {
-  const res = await fetch(APP + '/api/state');
+  const res = await fetch(`${APP}/api/state`);
   return res.json();
 }
 
 function ok(name, condition, detail) {
-  if (!condition) throw new Error('断言失败：' + name + (detail ? ' — ' + detail : ''));
+  if (!condition) throw new Error(`断言失败：${name}${detail ? ` — ${detail}` : ''}`);
   pass.push(name);
-  console.log('✓ ' + name);
+  console.log(`✓ ${name}`);
 }
 
 async function main() {
@@ -137,7 +137,7 @@ async function main() {
   await send('Network.enable');
   await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
-  await send('Page.navigate', { url: APP + '/?actions=' + Date.now() + '#/subs' });
+  await send('Page.navigate', { url: `${APP}/?actions=${Date.now()}#/subs` });
   await waitEvent('Page.loadEventFired', 15000).catch(() => {});
   await sleep(1800);
   errors.length = 0;
@@ -303,7 +303,7 @@ async function main() {
   const frierenAfter = ((await state()).extras || []).find((x) => x.id === frierenId);
   ok('下载完成后自动硬链接', !!frierenAfter && !!frierenAfter.hardlink && frierenAfter.hardlink.done === true
     && (frierenAfter.hardlink.linked + frierenAfter.hardlink.existed) >= 1 && /(集|字幕)/.test(hlRow) && !/失败/.test(hlRow),
-    JSON.stringify({ row: hlRow, hl: frierenAfter && frierenAfter.hardlink }));
+  JSON.stringify({ row: hlRow, hl: frierenAfter && frierenAfter.hardlink }));
   const seasonDir = path.join(DEMO_DATA, 'library', '葬送的芙莉莲', 'Season 1');
   const linkedFile = path.join(seasonDir, FRIEREN_FILE);
   const linkedSub = path.join(seasonDir, FRIEREN_FILE.replace(/\.mkv$/, '.ass'));
@@ -352,7 +352,7 @@ async function main() {
   ok('补番记录保存了硬链接目标', !!extraRec && !!extraRec.hardlink && extraRec.hardlink.dest === uiHlDest, JSON.stringify(extraRec && extraRec.hardlink));
   ok('补番记录保存了重命名/偏移', !!extraRec && extraRec.hardlink.rename === true
     && extraRec.hardlink.offset === 12 && extraRec.hardlink.subOffset === 0,
-    JSON.stringify(extraRec && extraRec.hardlink));
+  JSON.stringify(extraRec && extraRec.hardlink));
 
   // 8b. 硬链接开关：关闭后卡片标为「本次不硬链接」，再打开恢复
   await click(`[data-action="extra-hardlink-edit"][data-id="${extraRec.id}"]`, 500);
@@ -496,7 +496,7 @@ async function main() {
   await click('[data-action="hardlink-probe"]', 1400);
   const probeText = await ev("document.querySelector('#h-dest-preview')?.textContent || ''");
   ok('硬链接目录权限可检查', /可写/.test(probeText), probeText);
-  await ev(`(() => { const el = document.querySelector('#h-dest'); if (el) { el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); } return true; })()`);
+  await ev('(() => { const el = document.querySelector(\'#h-dest\'); if (el) { el.value=\'\'; el.dispatchEvent(new Event(\'input\',{bubbles:true})); } return true; })()');
 
   // 8h. 后台轮询原地更新：不重建页面、不清空未提交输入
   await ev("window.__viewTitle = document.querySelector('.page-title')");
@@ -509,7 +509,7 @@ async function main() {
   }))()`);
   ok('后台轮询原地更新不重建页面', afterPoll.same === true, JSON.stringify(afterPoll));
   ok('后台轮询不清空未提交输入', afterPoll.magnets.includes('c'.repeat(40)), afterPoll.magnets);
-  await ev(`(() => { const el = document.querySelector('#x-magnets'); if (el) { el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); } return true; })()`);
+  await ev('(() => { const el = document.querySelector(\'#x-magnets\'); if (el) { el.value=\'\'; el.dispatchEvent(new Event(\'input\',{bubbles:true})); } return true; })()');
 
   await click('[data-action="extras-status"]', 1200);
   ok('补番状态可刷新', await ev("!document.querySelector('.page-title') || true"));
@@ -631,7 +631,7 @@ async function main() {
   ok('移动端 6 个导航全部在视口内', navs.length === 6 && navs.every((n) => n.right <= 390 && n.left >= 0), JSON.stringify(navs));
   ok('移动端导航文字完整', navs.map((n) => n.text).join(',') === '总览,追番,补番,下载记录,站点与路径,连接设置', navs.map((n) => n.text).join(','));
 
-  console.log('\n交互测试全部通过：' + pass.length + ' 项');
+  console.log(`\n交互测试全部通过：${pass.length} 项`);
   console.log('console errors:', errors.length ? errors : 'none');
   ws.close();
 }

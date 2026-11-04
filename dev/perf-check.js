@@ -11,7 +11,6 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, '..');
 const PORT = 18777;
@@ -19,7 +18,7 @@ const APP = `http://127.0.0.1:${PORT}`;
 const DATA_DIR = path.join(ROOT, '..', 'work', 'anirss-perf-data');
 
 function fail(msg) {
-  console.error('✗ ' + msg);
+  console.error(`✗ ${msg}`);
   process.exitCode = 1;
   throw new Error(msg);
 }

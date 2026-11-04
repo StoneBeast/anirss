@@ -97,7 +97,7 @@ function matchNoProxyEntry(hostname, entry) {
   if (e.startsWith('.')) return host.endsWith(e);
   if (e.startsWith('*.')) return host.endsWith(e.slice(1));
   if (host === e) return true;
-  return host.endsWith('.' + e);
+  return host.endsWith(`.${e}`);
 }
 
 function isNoProxy(proxy, hostname) {

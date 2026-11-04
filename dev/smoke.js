@@ -24,7 +24,7 @@ const SERVER = path.join(ROOT, 'app', 'server', 'index.js');
 // 默认放在仓库外的 work/ 下；沙箱或 CI 里可以用 ANIRSS_SMOKE_DATA 指到可写目录
 const DATA_DIR = process.env.ANIRSS_SMOKE_DATA || path.join(ROOT, '..', 'work', 'anirss-smoke-data');
 // 生产模式（不带 ANIRSS_DEV_ALLOW_CUSTOM_BASES）单独起一个实例：验证内置站点替换与 403
-const PROD_DATA_DIR = DATA_DIR + '-prod';
+const PROD_DATA_DIR = `${DATA_DIR}-prod`;
 const APP_PORT = 8788;
 const QB_PORT = 18080;
 const RSS_PORT = 18081;
@@ -239,7 +239,8 @@ function batchSubgroupXml(subgroupId) {
 </channel></rss>`;
 }
 
-function searchXml() {  const items = SEARCH_EPISODES.map((e) => `
+function searchXml() {
+  const items = SEARCH_EPISODES.map((e) => `
     <item>
       <title><![CDATA[${e.title}]]></title>
       <link>http://127.0.0.1:${RSS_PORT}/Home/Episode/${e.hash}</link>
@@ -449,7 +450,7 @@ function sleep(ms) {
 async function waitHealth() {
   for (let i = 0; i < 80; i++) {
     try {
-      const res = await fetch(APP + '/api/health');
+      const res = await fetch(`${APP}/api/health`);
       if (res.ok) return;
     } catch { /* retry */ }
     await sleep(100);
@@ -491,7 +492,7 @@ async function productionChecks() {
   try {
     for (let i = 0; i < 80; i++) {
       try {
-        const res = await fetch(PROD_APP + '/api/health');
+        const res = await fetch(`${PROD_APP}/api/health`);
         if (res.ok) break;
       } catch { /* retry */ }
       await sleep(100);
@@ -530,7 +531,7 @@ async function productionChecks() {
     const after = await api('/api/state', {}, PROD_APP);
     assert.deepStrictEqual(after.bases.map((b) => b.id), ['b_mikan', 'b_mikan_overseas'], '导入后内存态也应是内置站点');
     assert.strictEqual(after.subs[0].baseId, 'b_mikan', '导入的追番应迁移到内置站点');
-    const exp = await (await fetch(PROD_APP + '/api/export')).json();
+    const exp = await (await fetch(`${PROD_APP}/api/export`)).json();
     assert.strictEqual(exp.bases, undefined, '导出不应包含站点');
     console.log('✓ 生产模式：导入后内存/磁盘一致 / 导出不含站点');
   } finally {
@@ -600,7 +601,6 @@ async function main() {
       method: 'POST',
       body: { name: '番剧', path: '/downloads/anime', isDefault: true },
     });
-    const pathId = pathRes.path.id;
     assert.strictEqual(pathRes.path.isDefault, true);
     console.log('✓ 存储路径预设');
 
@@ -703,7 +703,7 @@ async function main() {
     await expectError(
       () => api(`/api/subs/${subId}/check`, { method: 'POST', body: {} }),
       502,
-      'qBittorrent 不可用'
+      'qBittorrent 不可用',
     );
     const stateDown = await api('/api/state');
     assert.strictEqual(stateDown.subs.find((s) => s.id === subId).seenCount, seenBefore, 'qB 不可用时不应吞掉新条目');
@@ -792,14 +792,14 @@ async function main() {
     await expectError(
       () => api('/api/preview', { method: 'POST', body: { url: `http://127.0.0.1:${RSS_PORT}/feed`, include: '[' } }),
       400,
-      '正则'
+      '正则',
     );
     console.log('✓ 非法正则被拒绝');
 
     await expectError(
       () => api(`/api/bases/${mockBaseId}`, { method: 'DELETE' }),
       409,
-      '正在使用'
+      '正在使用',
     );
     console.log('✓ 使用中的站点不可删除');
 
@@ -1009,13 +1009,13 @@ async function main() {
     await expectError(
       () => api('/api/extras', { method: 'POST', body: { magnet: magnetUri } }),
       409,
-      '已在补番记录'
+      '已在补番记录',
     );
     knownHashes.add('d'.repeat(40));
     await expectError(
       () => api('/api/extras', { method: 'POST', body: { magnet: `magnet:?xt=urn:btih:${'d'.repeat(40)}&dn=Dup` } }),
       409,
-      '已存在相同种子'
+      '已存在相同种子',
     );
     console.log('✓ 补番：重复种子识别');
 
@@ -1154,7 +1154,7 @@ async function main() {
     await expectError(
       () => api(`/api/extras/${hlRec.id}/hardlink`, { method: 'POST', body: {} }),
       400,
-      '已关闭'
+      '已关闭',
     );
     const reenabled = await api(`/api/extras/${hlRec.id}/hardlink`, {
       method: 'PUT',
@@ -1197,7 +1197,7 @@ async function main() {
     await expectError(
       () => api('/api/hardlink', { method: 'PUT', body: { defaultDest: 'relative/path' } }),
       400,
-      '绝对路径'
+      '绝对路径',
     );
     console.log('✓ 补番：硬链接设置保存 / 校验');
 
@@ -1224,7 +1224,7 @@ async function main() {
     await expectError(
       () => api(`/api/extras/${extraRec.id}/hardlink`, { method: 'POST', body: {} }),
       400,
-      '没有设置硬链接目录'
+      '没有设置硬链接目录',
     );
     fs.rmSync(dlRoot, { recursive: true, force: true });
     fs.rmSync(linkRoot, { recursive: true, force: true });
@@ -1240,7 +1240,7 @@ async function main() {
     assert.strictEqual(qbDeletes[qbDeletes.length - 1].deleteFiles, true);
     console.log('✓ 补番：删除记录 / 删除任务');
 
-    const exported = await fetch(APP + '/api/export');
+    const exported = await fetch(`${APP}/api/export`);
     assert.strictEqual(exported.status, 200);
     const exp = await exported.json();
     assert.ok(exp.subs.length >= 2);
@@ -1321,7 +1321,7 @@ main().catch(async (e) => {
   console.error('\n烟测失败：', e && e.stack ? e.stack : e);
   try {
     const log = fs.readFileSync(path.join(DATA_DIR, 'stdout.log'), 'utf8');
-    console.error('\n--- anirss log ---\n' + log.slice(-4000));
+    console.error(`\n--- anirss log ---\n${log.slice(-4000)}`);
   } catch { /* ignore */ }
   process.exitCode = 1;
 });

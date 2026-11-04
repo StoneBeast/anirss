@@ -59,8 +59,8 @@
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
   const API = (() => {
-    const p = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
-    return p + 'api/';
+    const p = location.pathname.endsWith('/') ? location.pathname : `${location.pathname}/`;
+    return `${p}api/`;
   })();
 
   const S = {
@@ -129,16 +129,16 @@
   function fmtBytes(n) {
     const num = Number(n);
     if (!Number.isFinite(num) || num < 0) return '—';
-    if (num < 1024) return num + ' B';
+    if (num < 1024) return `${num} B`;
     const units = ['KB', 'MB', 'GB', 'TB'];
     let v = num / 1024;
     let i = 0;
     while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-    return (v >= 100 ? v.toFixed(0) : v.toFixed(1)) + ' ' + units[i];
+    return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
   }
 
   function fmtSpeed(n) {
-    return fmtBytes(n) + '/s';
+    return `${fmtBytes(n)}/s`;
   }
 
   function fmtCount(n) {
@@ -152,11 +152,11 @@
     if (diff < 0) return untilTime(ts);
     if (diff < 45000) return '刚刚';
     const mins = Math.floor(diff / 60000);
-    if (mins < 60) return mins + ' 分钟前';
+    if (mins < 60) return `${mins} 分钟前`;
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return hours + ' 小时前';
+    if (hours < 24) return `${hours} 小时前`;
     const days = Math.floor(hours / 24);
-    if (days < 30) return days + ' 天前';
+    if (days < 30) return `${days} 天前`;
     return fmtDate(ts, true);
   }
 
@@ -166,10 +166,10 @@
     if (diff <= 0) return '即将';
     const mins = Math.ceil(diff / 60000);
     if (mins <= 1) return '不到 1 分钟';
-    if (mins < 60) return mins + ' 分钟后';
+    if (mins < 60) return `${mins} 分钟后`;
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return hours + ' 小时后';
-    return Math.floor(hours / 24) + ' 天后';
+    if (hours < 24) return `${hours} 小时后`;
+    return `${Math.floor(hours / 24)} 天后`;
   }
 
   function fmtDate(ts, short) {
@@ -178,7 +178,7 @@
     try {
       return new Intl.DateTimeFormat('zh-CN', short
         ? { year: 'numeric', month: '2-digit', day: '2-digit' }
-        : { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }
+        : { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false },
       ).format(d);
     } catch {
       return d.toLocaleString();
@@ -260,7 +260,7 @@
       if (part.text != null) return part.text;
       if (part.name) return name || '${name}';
       const raw = String(values[part.var] == null ? '' : values[part.var]).trim();
-      if (!raw) return '${' + part.var + '}';
+      if (!raw) return `\${${part.var}}`;
       // 变量值里也允许写 ${name}，一并替换成追番名称
       return substituteNameInPath(raw, subName);
     }).join('');
@@ -277,7 +277,7 @@
     if (!p) return b;
     if (/^https?:\/\//i.test(p)) return p;
     if (!b) return p;
-    return b + '/' + p.replace(/^\/+/, '');
+    return `${b}/${p.replace(/^\/+/, '')}`;
   }
 
   function isHttp(value) {
@@ -352,7 +352,7 @@
     const kind = type || 'info';
     const iconName = kind === 'success' ? 'check' : kind === 'error' || kind === 'warn' ? 'alert' : 'info';
     const el = document.createElement('div');
-    el.className = 'toast ' + kind;
+    el.className = `toast ${kind}`;
     el.innerHTML = `
       <div class="toast-icon">${icon(iconName, 12)}</div>
       <div class="toast-text">${title ? `<strong>${esc(title)}</strong>` : ''}<span>${esc(message)}</span></div>
@@ -442,7 +442,7 @@
   // 否则手机上按返回会先退到上一个标签页，要连按几次才退出页面。
   function goRoute(hash) {
     const raw = String(hash == null ? '' : hash);
-    const target = raw.startsWith('#') ? raw : '#/' + (raw || 'overview');
+    const target = raw.startsWith('#') ? raw : `#/${raw || 'overview'}`;
     if (location.hash === target) return;
     // 弹层还开着：先收掉占位记录，落回路由记录后再切页
     if (layerGuards > 0) {
@@ -474,7 +474,7 @@
     const raw = (hit.getAttribute('href') || '').replace(/^#\/?/, '');
     if (!Object.prototype.hasOwnProperty.call(ROUTES, raw)) return;
     e.preventDefault();
-    goRoute('#/' + raw);
+    goRoute(`#/${raw}`);
   }
 
   function onRoute() {
@@ -646,7 +646,8 @@
     };
   }
 
-  function restoreViewDraft(root, draft) {    const byId = new Map($$('[id]', root).map((el) => [el.id, el]));
+  function restoreViewDraft(root, draft) {
+    const byId = new Map($$('[id]', root).map((el) => [el.id, el]));
     draft.fields.forEach((item) => {
       const el = byId.get(item.id);
       if (!el) return;
@@ -689,7 +690,7 @@
     const form = $('#sub-form');
     if (!form || !S.modalDirty) return null;
     const read = (id) => {
-      const el = $('#' + id, form);
+      const el = $(`#${id}`, form);
       if (!el) return '';
       return draftKind(el) === 'check' ? !!el.checked : el.value;
     };
@@ -947,7 +948,7 @@
                   <span class="next-dot"></span>
                   <span class="next-name" title="${esc(s.name)}">${esc(s.name)}</span>
                   <span class="next-time">${untilTime(s.nextCheckAt)}</span>
-                </div>`).join('')}</div>` : `<div class="qb-empty">暂无启用的追番</div>`}
+                </div>`).join('')}</div>` : '<div class="qb-empty">暂无启用的追番</div>'}
             </div>
           </div>
         </div>
@@ -976,8 +977,8 @@
                 <span class="setup-num">${s.done ? icon('check', 13) : i + 1}</span>
                 <div class="setup-main"><strong>${s.title}</strong><small>${s.desc}</small></div>
                 ${s.done
-                  ? '<span class="setup-state">已完成</span>'
-                  : `<button class="btn btn-sm" data-action="${s.action}">${s.label}${icon('chevron-right')}</button>`}
+    ? '<span class="setup-state">已完成</span>'
+    : `<button class="btn btn-sm" data-action="${s.action}">${s.label}${icon('chevron-right')}</button>`}
               </div>`).join('')}
           </div>
         </div>
@@ -1074,7 +1075,7 @@
                 <span class="torrent-meta">${Math.round((t.progress || 0) * 100)}% · ${fmtSpeed(t.dlspeed || 0)}</span>
               </div>
               <div class="bar"><div class="bar-inner" style="width:${Math.min(100, Math.max(0, (t.progress || 0) * 100))}%"></div></div>
-            </div>`).join('') : `<div class="qb-empty">当前没有正在下载的任务</div>`}
+            </div>`).join('') : '<div class="qb-empty">当前没有正在下载的任务</div>'}
         </div>
       </div>`;
   }
@@ -1150,8 +1151,8 @@
           <div class="empty-actions"><button class="btn" data-action="filter-sub" data-filter="all">查看全部</button></div>
         </div>` : `
         ${S.subView === 'grid'
-          ? `<div class="sub-grid">${list.map(subTileHTML).join('')}</div>`
-          : `<div class="sub-list">${list.map(subCardHTML).join('')}</div>`}`}`;
+    ? `<div class="sub-grid">${list.map(subTileHTML).join('')}</div>`
+    : `<div class="sub-list">${list.map(subCardHTML).join('')}</div>`}`}`;
   }
 
   function subTileHTML(s) {
@@ -1259,10 +1260,6 @@
   }
 
   /* ============================================================
-   * 下载记录
-   * ============================================================ */
-
-  /* ============================================================
    * 补番：磁力 / 种子单次下载
    * ============================================================ */
 
@@ -1281,12 +1278,12 @@
       : '';
     return `
       <div class="path-template ${t ? '' : 'hidden'}" id="path-template">
-        <div class="template-head">
-          <span class="template-name" id="path-template-name">${name}</span>
+        <div class="path-template-head">
+          <strong id="path-template-name">${name}</strong>
           <span class="spacer"></span>
           <button class="btn btn-sm btn-ghost" type="button" data-action="path-template-custom">改为自定义</button>
         </div>
-        <div class="template-raw small faint" id="path-template-raw">${raw}</div>
+        <div class="field-hint" id="path-template-raw">${raw}</div>
         <div class="template-vars" id="path-template-vars">${vars}</div>
       </div>`;
   }
@@ -1402,8 +1399,8 @@
             ${x.paused ? '<span class="badge gray">暂停</span>' : ''}
             ${x.episodeLabel ? `<span class="chip accent">${esc(x.episodeLabel)}</span>` : ''}
             ${x.ok
-              ? `<span class="badge ${qbStateBadge(qb && qb.state)}">${esc(qbStateText(qb && qb.state))}</span>`
-              : '<span class="badge red">提交失败</span>'}
+    ? `<span class="badge ${qbStateBadge(qb && qb.state)}">${esc(qbStateText(qb && qb.state))}</span>`
+    : '<span class="badge red">提交失败</span>'}
           </div>
           <div class="extra-meta">${meta.join('')}</div>
           ${x.ok && qb ? `<div class="progress"><span style="width:${pct}%"></span></div>` : ''}
@@ -1617,8 +1614,8 @@
         <span class="small faint">共 ${extras.length} 条</span>
       </div>
       ${extras.length
-        ? `<div class="extra-list">${extras.map(extraCardHTML).join('')}</div>`
-        : '<div class="qb-empty">还没有补番记录。粘贴磁力链接或选择 .torrent 文件即可单次下载。</div>'}`;
+    ? `<div class="extra-list">${extras.map(extraCardHTML).join('')}</div>`
+    : '<div class="qb-empty">还没有补番记录。粘贴磁力链接或选择 .torrent 文件即可单次下载。</div>'}`;
   }
 
   function guessResultHTML() {
@@ -1731,7 +1728,7 @@
     const target = renderHardlinkDest(v.dest, v.name || 'x', v.season);
     const el = $('#h-dest-preview');
     try {
-      const r = await api('hardlink/probe?path=' + encodeURIComponent(target));
+      const r = await api(`hardlink/probe?path=${encodeURIComponent(target)}`);
       const p = (r && r.probe) || {};
       const text = p.message || '检查完成';
       if (el) {
@@ -1979,7 +1976,7 @@
     return Promise.all(Array.from(fileList || []).map((f) => new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve({ name: f.name, data: String(r.result || '').split(',')[1] || '' });
-      r.onerror = () => reject(new Error('读取文件失败：' + f.name));
+      r.onerror = () => reject(new Error(`读取文件失败：${f.name}`));
       r.readAsDataURL(f);
     })));
   }
@@ -2229,11 +2226,11 @@
     const r = S.searchResult;
     if (!r) return '';
     if (!r.results.length) {
-      return `<div class="qb-empty">没有找到匹配的番剧，换个关键词或到站点确认名字。</div>`;
+      return '<div class="qb-empty">没有找到匹配的番剧，换个关键词或到站点确认名字。</div>';
     }
     return `
       <div class="search-summary small faint">搜索「${esc(r.query)}」：${r.results.length} 部番剧 / ${r.totalEpisodes} 条单集 · ${esc(r.baseName || '')}</div>
-      ${S.searchPending ? `<div class="search-pending small"><span class="spinner"></span> 正在补齐字幕组精确体积…</div>` : ''}
+      ${S.searchPending ? '<div class="search-pending small"><span class="spinner"></span> 正在补齐字幕组精确体积…</div>' : ''}
       <div class="search-list">
         ${r.results.map((g) => `
           <article class="search-hit">
@@ -2248,18 +2245,18 @@
               <div class="search-sub small faint">${esc(g.homeUrl || '')}</div>
               <div class="subgroup-list">
                 ${g.subgroups.map((s) => {
-                  const sizeLine = subgroupSizeText(s);
-                  const singleRange = sizeRangeText(s.sizeMin, s.sizeMax);
-                  const tooltip = [
-                    s.episodeText ? `收录：第 ${s.episodeText} 集` : '',
-                    s.matched ? `本次搜索匹配 ${s.matched} 条` : '',
-                    s.countSource === 'rss' ? '集数按字幕组 RSS 统计' : (s.countSource ? '集数按番组主页统计' : ''),
-                    s.batch ? '含合集' : '',
-                    singleRange ? `单集 ${singleRange}` : '',
-                    s.batchSize ? `合集 ${fmtBytes(s.batchSize)}${s.batchLabel && s.batchLabel !== '合集' ? `（${s.batchLabel}）` : ''}` : '',
-                    s.sampleTitle || s.rssUrl || '',
-                  ].filter(Boolean).join(' · ');
-                  return `
+    const sizeLine = subgroupSizeText(s);
+    const singleRange = sizeRangeText(s.sizeMin, s.sizeMax);
+    const tooltip = [
+      s.episodeText ? `收录：第 ${s.episodeText} 集` : '',
+      s.matched ? `本次搜索匹配 ${s.matched} 条` : '',
+      s.countSource === 'rss' ? '集数按字幕组 RSS 统计' : (s.countSource ? '集数按番组主页统计' : ''),
+      s.batch ? '含合集' : '',
+      singleRange ? `单集 ${singleRange}` : '',
+      s.batchSize ? `合集 ${fmtBytes(s.batchSize)}${s.batchLabel && s.batchLabel !== '合集' ? `（${s.batchLabel}）` : ''}` : '',
+      s.sampleTitle || s.rssUrl || '',
+    ].filter(Boolean).join(' · ');
+    return `
                   <button class="subgroup-chip ${s.matched ? 'hit' : ''}${sizeLine ? ' has-size' : ''}" type="button"
                     data-action="pick-subgroup"
                     data-base="${esc(r.baseId)}"
@@ -2273,7 +2270,7 @@
                     </span>
                     ${sizeLine ? `<span class="subgroup-size">${esc(sizeLine)}</span>` : ''}
                   </button>`;
-                }).join('')}
+  }).join('')}
               </div>
             </div>
           </article>`).join('')}
@@ -2319,8 +2316,8 @@
     if (!box) return;
     const items = readSearchHistory();
     box.innerHTML = items.length
-      ? items.map((q) => `<button class="chip chip-btn" type="button" data-action="search-history" data-query="${esc(q)}">${esc(q)}</button>`).join('')
-        + `<button class="icon-btn search-history-clear" type="button" data-action="search-history-clear" title="清除搜索历史">${icon('trash', 13)}</button>`
+      ? `${items.map((q) => `<button class="chip chip-btn" type="button" data-action="search-history" data-query="${esc(q)}">${esc(q)}</button>`).join('')
+      }<button class="icon-btn search-history-clear" type="button" data-action="search-history-clear" title="清除搜索历史">${icon('trash', 13)}</button>`
       : '';
   }
 
@@ -2467,6 +2464,10 @@
     toast('已填好站点、路径和名称，确认正则与存储路径后创建即可', 'info', '下一步');
   }
 
+  /* ============================================================
+   * 下载记录
+   * ============================================================ */
+
   function viewDownloads() {
     const d = S.data;
     const all = d.downloads || [];
@@ -2519,7 +2520,7 @@
                   <tr data-key="${esc(x.id)}">
                     <td>
                       <div class="t-title" title="${esc(x.title)}">${x.episodeLabel ? `<span class="chip accent t-ep">${esc(x.episodeLabel)}</span> ` : ''}${esc(x.title)}</div>
-                      ${x.error ? `<div class="t-sub" style="color:#e79aa5;max-width:420px">${esc(x.error)}</div>` : `<div class="t-sub">${esc(x.mode === 'magnet' ? '磁力链接' : x.mode === 'url' ? 'URL 提交' : '种子文件')}</div>`}
+                      ${x.error ? `<div class="t-sub" style="color:var(--red);max-width:420px">${esc(x.error)}</div>` : `<div class="t-sub">${esc(x.mode === 'magnet' ? '磁力链接' : x.mode === 'url' ? 'URL 提交' : '种子文件')}</div>`}
                     </td>
                     <td><span class="small muted">${esc(x.subName || '—')}</span></td>
                     <td><div class="cell-path" title="${esc(x.savePath || '')}">${esc(x.savePath || 'qB 默认')}</div></td>
@@ -2591,8 +2592,8 @@
           </div>
           <div class="card-body" style="padding-top:12px">
             <div class="preset-list">${d.bases.map((b) => {
-              const used = d.subs.filter((s) => s.baseId === b.id).length;
-              return `
+    const used = d.subs.filter((s) => s.baseId === b.id).length;
+    return `
                 <div class="preset-item">
                   <span class="preset-icon">${icon('server', 15)}</span>
                   <div class="preset-main">
@@ -2601,7 +2602,7 @@
                     ${b.note ? `<div class="preset-meta">${esc(b.note)}</div>` : ''}
                   </div>
                 </div>`;
-            }).join('')}</div>
+  }).join('')}</div>
             <div class="field-hint" style="margin-top:12px">站点由应用内置（当前功能围绕蜜柑计划展开），暂时无法自定义；新增追番时选择站点后填路径即可。</div>
           </div>
         </div>
@@ -2615,9 +2616,9 @@
           </div>
           <div class="card-body" style="padding-top:12px">
             ${d.paths.length ? `<div class="preset-list">${d.paths.map((p) => {
-              const used = d.subs.filter((s) => s.savePath === p.path).length;
-              const tpl = parsePathTemplate(p.path);
-              return `
+    const used = d.subs.filter((s) => s.savePath === p.path).length;
+    const tpl = parsePathTemplate(p.path);
+    return `
                 <div class="preset-item">
                   <span class="preset-icon green">${icon('folder', 15)}</span>
                   <div class="preset-main">
@@ -2630,7 +2631,7 @@
                     <button class="icon-btn danger" data-action="delete-path" data-id="${esc(p.id)}" title="删除">${icon('trash')}</button>
                   </div>
                 </div>`;
-            }).join('')}</div>` : `
+  }).join('')}</div>` : `
               <div class="qb-empty">还没有存储路径预设<br><button class="btn btn-sm" style="margin-top:10px" data-action="open-path">${icon('plus')}添加第一个</button></div>`}
             <div class="field-hint" style="margin-top:12px">路径是传给 qBittorrent 的 <code>savepath</code>。支持模板变量：<code>${'$'}{{1}}</code>、<code>${'$'}{{}}</code>，套用时逐项填空。</div>
           </div>
@@ -2688,7 +2689,7 @@
               </div>
 
               <label class="check"><input type="checkbox" id="qb-skip" ${qb.skipTlsVerify ? 'checked' : ''}><span><strong>忽略 HTTPS 证书校验</strong><span class="check-hint">仅在使用自签名证书的 qBittorrent WebUI 时启用</span></span></label>
-              ${qb.hasPassword ? `<label class="check"><input type="checkbox" id="qb-clear"><span><strong>清除已保存的密码</strong><span class="check-hint">勾选并保存后，将使用空密码连接</span></span></label>` : ''}
+              ${qb.hasPassword ? '<label class="check"><input type="checkbox" id="qb-clear"><span><strong>清除已保存的密码</strong><span class="check-hint">勾选并保存后，将使用空密码连接</span></span></label>' : ''}
 
               <div class="btn-row" style="margin-top:2px">
                 <button class="btn btn-primary" type="submit">${icon('check')}保存并测试</button>
@@ -2744,7 +2745,7 @@
                 </div>
               </div>
               <label class="check"><input type="checkbox" id="proxy-skip" ${proxy.skipTlsVerify ? 'checked' : ''}><span><strong>忽略代理 HTTPS 证书校验</strong><span class="check-hint">仅在代理使用自签名证书时启用</span></span></label>
-              ${proxy.hasPassword ? `<label class="check"><input type="checkbox" id="proxy-clear"><span><strong>清除已保存的代理密码</strong><span class="check-hint">勾选并保存后，将使用空密码</span></span></label>` : ''}
+              ${proxy.hasPassword ? '<label class="check"><input type="checkbox" id="proxy-clear"><span><strong>清除已保存的代理密码</strong><span class="check-hint">勾选并保存后，将使用空密码</span></span></label>' : ''}
               <div class="btn-row" style="margin-top:2px">
                 <button class="btn btn-primary" type="submit">${icon('check')}保存代理设置</button>
                 <button class="btn" type="button" data-action="test-proxy">${icon('shield')}测试代理</button>
@@ -2911,7 +2912,7 @@
     try {
       payload = JSON.parse(await file.text());
     } catch (e) {
-      toast('不是有效的 JSON 文件：' + e.message, 'error');
+      toast(`不是有效的 JSON 文件：${e.message}`, 'error');
       return;
     }
     const ok = await askConfirm({
@@ -2961,15 +2962,6 @@
    * 数据刷新 / qB 状态
    * ============================================================ */
 
-  /** 用户正在 #view 的文本框里输入（含输入法组字）时，别重绘打断。 */
-  function isEditingView() {
-    const el = document.activeElement;
-    if (!el || !el.tagName) return false;
-    const view = $('#view');
-    if (!view || !view.contains(el)) return false;
-    return draftKind(el) === 'text';
-  }
-
   async function refresh(options) {
     if (S.refreshing) return;
     S.refreshing = true;
@@ -3005,7 +2997,7 @@
     if (!S.data.qb.verifiedAt && !S.data.qb.lastTest) return;
     S.qbLoading = true;
     try {
-      const st = await api('qb/status' + (force ? '?force=1' : ''));
+      const st = await api(`qb/status${force ? '?force=1' : ''}`);
       S.qbStatus = st;
       if (S.view === 'overview') softRenderView();
     } catch (e) {
@@ -3179,7 +3171,7 @@
         });
         if (!ok) break;
         await withBusy(el, async () => {
-          await api('subs/' + encodeURIComponent(id), { method: 'DELETE' });
+          await api(`subs/${encodeURIComponent(id)}`, { method: 'DELETE' });
           toast('追番已删除', 'success');
           await refresh();
         });
@@ -3210,7 +3202,7 @@
             r.downloaded
               ? `已补下 ${r.downloaded} 条现有匹配${r.failed ? `，失败 ${r.failed} 条` : ''}`
               : (r.failed ? `补下失败 ${r.failed} 条` : '没有可补下的现有匹配'),
-            r.failed ? 'error' : 'success'
+            r.failed ? 'error' : 'success',
           );
           await refresh();
           await loadQbStatus(true);
@@ -3277,7 +3269,7 @@
         });
         if (!ok) break;
         await withBusy(el, async () => {
-          await api('paths/' + encodeURIComponent(id), { method: 'DELETE' });
+          await api(`paths/${encodeURIComponent(id)}`, { method: 'DELETE' });
           toast('已删除路径预设', 'success');
           await refresh();
         });
@@ -3287,7 +3279,7 @@
         const p = S.data.paths.find((x) => x.id === id);
         if (!p) break;
         await withBusy(el, async () => {
-          await api('paths/' + encodeURIComponent(id), { method: 'PUT', body: { name: p.name, path: p.path, isDefault: true } });
+          await api(`paths/${encodeURIComponent(id)}`, { method: 'PUT', body: { name: p.name, path: p.path, isDefault: true } });
           toast('已设为默认存储路径', 'success');
           await refresh();
         });
@@ -3344,7 +3336,7 @@
         const area = $(target);
         if (!area) break;
         const value = el.dataset.value || '';
-        area.value = area.value && !area.value.endsWith('\n') ? area.value + '\n' + value : area.value + value;
+        area.value = area.value && !area.value.endsWith('\n') ? `${area.value}\n${value}` : area.value + value;
         area.dispatchEvent(new Event('input', { bubbles: true }));
         area.focus();
         area.selectionStart = area.selectionEnd = area.value.length;
@@ -3379,15 +3371,15 @@
         });
         break;
       case 'allow-redownload':        await withBusy(el, async () => {
-          try {
-            await api(`downloads/${encodeURIComponent(id)}/allow-redownload`, { method: 'POST', body: {} });
-            toast('已允许重新下载该条目（下次检查会重新提交）', 'success');
-            await refresh();
-            if (S.drawer) await refreshDrawer();
-          } catch (e) {
-            toast(e.message, 'error');
-          }
-        });
+        try {
+          await api(`downloads/${encodeURIComponent(id)}/allow-redownload`, { method: 'POST', body: {} });
+          toast('已允许重新下载该条目（下次检查会重新提交）', 'success');
+          await refresh();
+          if (S.drawer) await refreshDrawer();
+        } catch (e) {
+          toast(e.message, 'error');
+        }
+      });
         break;
       case 'import-config': {
         const input = $('#import-file');
@@ -3616,50 +3608,6 @@
     if (fn) fn(value);
   }
 
-  /** 单行输入弹窗：返回字符串（可能是空串），取消返回 false */
-  function askPrompt(opts) {
-    return new Promise((resolve) => {
-      S.confirmResolve = resolve;
-      S.modalEdited = false;
-      S.modalOpenedAt = Date.now();
-      const root = $('#modal-root');
-      if (!root) return resolve(false);
-      if (!root.children.length) pushLayerGuard();
-      root.innerHTML = `
-        <div class="modal-backdrop" data-backdrop="modal">
-          <div class="modal sm" role="dialog" aria-modal="true">
-            <div class="modal-head">
-              <div>
-                <div class="modal-title">${esc(opts.title || '编辑')}</div>
-                <div class="modal-sub">${esc(opts.message || '')}</div>
-              </div>
-              <button class="icon-btn modal-close" type="button" data-action="prompt-no">${icon('x')}</button>
-            </div>
-            <div class="modal-body">
-              <input class="input mono" id="prompt-input" value="${esc(opts.value || '')}" placeholder="${esc(opts.placeholder || '')}" spellcheck="false">
-            </div>
-            <div class="modal-foot">
-              <button class="btn" type="button" data-action="prompt-no">取消</button>
-              <button class="btn btn-primary" type="button" data-action="prompt-yes">${esc(opts.confirmText || '确定')}</button>
-            </div>
-          </div>
-        </div>`;
-      syncLock();
-      setTimeout(() => {
-        const input = $('#prompt-input');
-        if (!input) return;
-        input.focus();
-        input.select();
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            resolveConfirm(input.value.trim());
-          }
-        });
-      }, 40);
-    });
-  }
-
   /** 多字段弹窗：返回 { key: value }，取消返回 false */
   function askForm(opts) {
     return new Promise((resolve) => {
@@ -3772,7 +3720,7 @@
     if (!input || !box) return;
     const parsed = parsePathTemplate(input.value);
     if (parsed.count) {
-      const names = parsed.indices.map((idx) => '${' + idx + '}').join('、');
+      const names = parsed.indices.map((idx) => `\${${idx}}`).join('、');
       box.innerHTML = `已识别 <strong>${parsed.count}</strong> 个变量：<code>${esc(names)}</code>。套用这个预设时，会显示 ${parsed.count} 个输入框。`;
     } else {
       box.innerHTML = '没有变量时，会作为固定路径直接套用。变量写法：'
@@ -3861,24 +3809,24 @@
                       <span class="regex-suggest-label">常用包含</span>
                       <div class="regex-chips">
                         ${[
-                          ['1080p', '1080p'],
-                          ['720p', '720p'],
-                          ['简日|繁日', '简日|繁日'],
-                          ['简体|繁体', '简体|繁体'],
-                          ['Baha|WEB-DL', 'Baha|WEB-DL'],
-                          ['\\d{1,3}', '\\d{1,3}'],
-                        ].map(([label, value]) => `<button type="button" class="regex-chip" data-action="insert-regex" data-target="include" data-value="${esc(value)}">${esc(label)}</button>`).join('')}
+    ['1080p', '1080p'],
+    ['720p', '720p'],
+    ['简日|繁日', '简日|繁日'],
+    ['简体|繁体', '简体|繁体'],
+    ['Baha|WEB-DL', 'Baha|WEB-DL'],
+    ['\\d{1,3}', '\\d{1,3}'],
+  ].map(([label, value]) => `<button type="button" class="regex-chip" data-action="insert-regex" data-target="include" data-value="${esc(value)}">${esc(label)}</button>`).join('')}
                       </div>
                     </div>
                     <div class="regex-suggest-row">
                       <span class="regex-suggest-label">常用排除</span>
                       <div class="regex-chips">
                         ${[
-                          ['合集|SP|OVA', '合集|SP|OVA'],
-                          ['预告|PV', '预告|PV'],
-                          ['NCOP|NCED', 'NCOP|NCED'],
-                          ['\\d{1,3}-\\d{1,3}', '\\d{1,3}-\\d{1,3}'],
-                        ].map(([label, value]) => `<button type="button" class="regex-chip" data-action="insert-regex" data-target="exclude" data-value="${esc(value)}">${esc(label)}</button>`).join('')}
+    ['合集|SP|OVA', '合集|SP|OVA'],
+    ['预告|PV', '预告|PV'],
+    ['NCOP|NCED', 'NCOP|NCED'],
+    ['\\d{1,3}-\\d{1,3}', '\\d{1,3}-\\d{1,3}'],
+  ].map(([label, value]) => `<button type="button" class="regex-chip" data-action="insert-regex" data-target="exclude" data-value="${esc(value)}">${esc(label)}</button>`).join('')}
                       </div>
                     </div>
                   </div>
@@ -4191,7 +4139,7 @@
     const el = $('#f-name-hint');
     if (!el) return;
     el.textContent = text;
-    el.className = 'field-hint' + (kind ? ` hint-${kind}` : '');
+    el.className = `field-hint${kind ? ` hint-${kind}` : ''}`;
   }
 
   function scheduleResolveName() {
@@ -4265,7 +4213,7 @@
       savePath = substituteNameInPath(savePath, name).trim();
     }
 
-    let payload = {
+    const payload = {
       name,
       include: $('#f-include', form).value,
       exclude: $('#f-exclude', form).value,
@@ -4320,7 +4268,7 @@
     } else {
       setSubMode('full');
       const urlInput = $('#f-url', form);
-      if (urlInput) urlInput.value = 'https://mikanime.tv/' + examplePath;
+      if (urlInput) urlInput.value = `https://mikanime.tv/${examplePath}`;
       if (!silent) toast('没有 Mikan 站点，已填入完整地址', 'info');
     }
     const include = $('#f-include', form);
@@ -4346,7 +4294,7 @@
         }
       } catch (e) {
         if (box) {
-          box.innerHTML = `<div class="preview-empty" style="color:#ff9dab">${esc(e.message)}</div>`;
+          box.innerHTML = `<div class="preview-empty" style="color:var(--red)">${esc(e.message)}</div>`;
           box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         toast(e.message, 'error');
@@ -4365,7 +4313,7 @@
         ${items.length ? items.map((it) => `
           <div class="preview-row">
             <span class="badge ${it.matched ? 'green' : it.reason === 'exclude' ? 'red' : 'gray'}">${it.matched ? '匹配' : it.reason === 'exclude' ? '排除' : it.reason === 'include' ? '未命中' : '跳过'}</span>
-            <div class="preview-title">${esc(it.title)}<small>${it.pubDate ? fmtDate(it.pubDate) : '无日期'}${it.size ? ' · ' + fmtBytes(it.size) : ''}${it.downloadable ? '' : ' · 无种子链接'}</small></div>
+            <div class="preview-title">${esc(it.title)}<small>${it.pubDate ? fmtDate(it.pubDate) : '无日期'}${it.size ? ` · ${fmtBytes(it.size)}` : ''}${it.downloadable ? '' : ' · 无种子链接'}</small></div>
           </div>`).join('') : '<div class="preview-empty">该 RSS 没有条目</div>'}
       </div>
       ${data.total > items.length ? `<div class="preview-empty">还有 ${data.total - items.length} 条未显示</div>` : ''}`;
@@ -4451,11 +4399,11 @@
             ${data ? `<div class="small faint" style="margin-top:8px">${esc(data.feedTitle || '')} · 拉取于 ${relTime(data.fetchedAt)}${d.loading ? ' · 刷新中…' : ''}</div>` : ''}
           </div>
           <div class="drawer-body">
-            ${d.loading && !data ? `<div class="qb-empty"><span class="spinner" style="display:inline-block;vertical-align:-2px"></span> 正在拉取 RSS…</div>` : ''}
+            ${d.loading && !data ? '<div class="qb-empty"><span class="spinner" style="display:inline-block;vertical-align:-2px"></span> 正在拉取 RSS…</div>' : ''}
             ${d.error ? `<div class="notice red">${icon('alert')}<div>${esc(d.error)}<br><button class="btn btn-sm" style="margin-top:8px" data-action="drawer-refresh">重试</button></div></div>` : ''}
             ${!d.loading && !d.error && data && items.length === 0 ? '<div class="qb-empty">RSS 中没有条目</div>' : ''}
             ${items.length ? `<div class="item-list">${items.map((it) => feedItemHTML(sub, it)).join('')}</div>` : ''}
-            ${data && data.truncated ? `<div class="qb-empty">仅显示前 150 条</div>` : ''}
+            ${data && data.truncated ? '<div class="qb-empty">仅显示前 150 条</div>' : ''}
           </div>
           <div class="drawer-foot">
             <button class="btn btn-primary" data-action="drawer-check">${icon('refresh')}立即检查并下载</button>
@@ -4615,7 +4563,7 @@
         toast(`连接验证成功：${r.version || 'qBittorrent'}`, 'success');
       } catch (e) {
         S.testResult = { ok: false, error: e.message, baseUrl: values.base };
-        toast('设置已保存，但连接测试失败：' + e.message, 'warn');
+        toast(`设置已保存，但连接测试失败：${e.message}`, 'warn');
       }
       await refresh();
       await loadQbStatus(true);
@@ -4632,7 +4580,7 @@
       if (!name) throw new Error('请填写名称');
       if (!path) throw new Error('请填写路径');
       if (id) {
-        await api('paths/' + encodeURIComponent(id), { method: 'PUT', body: { name, path, isDefault } });
+        await api(`paths/${encodeURIComponent(id)}`, { method: 'PUT', body: { name, path, isDefault } });
         toast('存储路径已保存', 'success');
       } else {
         await api('paths', { method: 'POST', body: { name, path, isDefault } });
@@ -4651,7 +4599,7 @@
       const id = form.dataset.id || '';
       try {
         if (id) {
-          await api('subs/' + encodeURIComponent(id), { method: 'PUT', body: payload });
+          await api(`subs/${encodeURIComponent(id)}`, { method: 'PUT', body: payload });
           toast(payload.resetSeen ? '追番已保存，已清空已见并允许重新下载历史条目' : '追番已保存', 'success');
         } else {
           const r = await api('subs', { method: 'POST', body: payload });

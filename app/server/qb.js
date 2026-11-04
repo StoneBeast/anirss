@@ -28,7 +28,7 @@ class QBClient {
     const headers = {
       'User-Agent': UA,
       'Accept': opts.accept || 'application/json, text/plain, */*',
-      'Referer': this.base + '/',
+      'Referer': `${this.base}/`,
       'Origin': this.base,
       ...(opts.headers || {}),
     };
@@ -85,7 +85,7 @@ class QBClient {
             });
           });
           res.on('error', fail);
-        }
+        },
       );
 
       req.on('timeout', () => {
@@ -101,7 +101,7 @@ class QBClient {
         else if (code === 'CERT_HAS_EXPIRED' || code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
           msg = `qBittorrent HTTPS 证书校验失败（${code}），可启用「忽略证书校验」`;
         } else if (code === 'ECONNRESET') msg = `连接 qBittorrent 被重置：${this.base}`;
-        else msg = `连接 qBittorrent 失败${code ? '（' + code + '）' : ''}：${e.message}`;
+        else msg = `连接 qBittorrent 失败${code ? `（${code}）` : ''}：${e.message}`;
         fail(httpError(502, msg, 'QB_NETWORK'));
       });
       if (opts.body != null) req.write(opts.body);
@@ -128,7 +128,7 @@ class QBClient {
         body,
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'Referer': this.base + '/',
+          'Referer': `${this.base}/`,
         },
       });
     } catch (e) {
@@ -224,7 +224,7 @@ class QBClient {
     const h = String(hash || '').toLowerCase();
     if (!/^[a-f0-9]{40}$/.test(h)) return false;
     try {
-      const list = await this.getJson('/api/v2/torrents/info?hashes=' + encodeURIComponent(h));
+      const list = await this.getJson(`/api/v2/torrents/info?hashes=${encodeURIComponent(h)}`);
       if (!Array.isArray(list)) return false;
       return list.some((item) => String(item && item.hash || '').toLowerCase() === h);
     } catch {
@@ -248,19 +248,19 @@ class QBClient {
     let body;
     let contentType;
     if (options.buffer) {
-      const boundary = '----anirss' + crypto.randomBytes(10).toString('hex');
+      const boundary = `----anirss${crypto.randomBytes(10).toString('hex')}`;
       const parts = [];
       for (const [key, value] of Object.entries(fields)) {
         parts.push(Buffer.from(
           `--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`,
-          'utf8'
+          'utf8',
         ));
       }
       const filename = String(options.filename || 'file.torrent').replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
       parts.push(Buffer.from(
         `--${boundary}\r\nContent-Disposition: form-data; name="torrents"; filename="${filename}"\r\n` +
         'Content-Type: application/x-bittorrent\r\n\r\n',
-        'utf8'
+        'utf8',
       ));
       parts.push(options.buffer);
       parts.push(Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8'));
@@ -316,7 +316,7 @@ class QBClient {
       .filter((h) => /^[a-f0-9]{40}$/.test(h));
     if (!list.length) return [];
     await this.ensureLogin();
-    const data = await this.getJson('/api/v2/torrents/info?hashes=' + encodeURIComponent(list.join('|')));
+    const data = await this.getJson(`/api/v2/torrents/info?hashes=${encodeURIComponent(list.join('|'))}`);
     return Array.isArray(data) ? data : [];
   }
 
@@ -325,7 +325,7 @@ class QBClient {
     const h = String(hash || '').toLowerCase();
     if (!/^[a-f0-9]{40}$/.test(h)) return [];
     await this.ensureLogin();
-    const data = await this.getJson('/api/v2/torrents/files?hash=' + encodeURIComponent(h));
+    const data = await this.getJson(`/api/v2/torrents/files?hash=${encodeURIComponent(h)}`);
     return Array.isArray(data) ? data : [];
   }
 

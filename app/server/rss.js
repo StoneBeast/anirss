@@ -58,13 +58,13 @@ function cleanText(input, max) {
 const tagReCache = new Map();
 
 function cachedTagRe(kind, name) {
-  const key = kind + '|' + name;
+  const key = `${kind}|${name}`;
   let re = tagReCache.get(key);
   if (!re) {
     const escaped = escapeRegExp(name);
     re = kind === 'block'
-      ? new RegExp('<' + escaped + '(?:\\s[^>]*)?>([\\s\\S]*?)<\\/' + escaped + '\\s*>', 'i')
-      : new RegExp('<' + escaped + '\\b[^>]*>', 'gi');
+      ? new RegExp(`<${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${escaped}\\s*>`, 'i')
+      : new RegExp(`<${escaped}\\b[^>]*>`, 'gi');
     tagReCache.set(key, re);
   }
   re.lastIndex = 0;

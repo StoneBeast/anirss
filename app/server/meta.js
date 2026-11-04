@@ -254,7 +254,7 @@ function parseMikanHome(html, homeUrl) {
   }
 
   const info = (label) => {
-    const re = new RegExp('class=["\'][^"\']*bangumi-info[^"\']*["\'][^>]*>\\s*' + label + '：([\\s\\S]*?)<\\/p>', 'i');
+    const re = new RegExp(`class=["'][^"']*bangumi-info[^"']*["'][^>]*>\\s*${label}：([\\s\\S]*?)<\\/p>`, 'i');
     const m = re.exec(text);
     return m ? cleanText(m[1]) : '';
   };

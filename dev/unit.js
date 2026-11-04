@@ -17,7 +17,7 @@ const { buildZip } = require('./zip-builder');
 const zlib = require('zlib');
 const {
   compileFilters, matchTitle, composeUrl, normalizeBaseUrl,
-  isHttpUrl, filenameFromUrl, formatBytes, httpError, guessEpisode, episodeRanges,
+  isHttpUrl, filenameFromUrl, formatBytes, guessEpisode, episodeRanges,
 } = require('../app/server/util');
 
 let passed = 0;
@@ -25,9 +25,9 @@ function test(name, fn) {
   try {
     fn();
     passed++;
-    console.log('✓ ' + name);
+    console.log(`✓ ${name}`);
   } catch (e) {
-    console.error('✗ ' + name);
+    console.error(`✗ ${name}`);
     throw e;
   }
 }
@@ -36,9 +36,9 @@ async function testAsync(name, fn) {
   try {
     await fn();
     passed++;
-    console.log('✓ ' + name);
+    console.log(`✓ ${name}`);
   } catch (e) {
-    console.error('✗ ' + name);
+    console.error(`✗ ${name}`);
     throw e;
   }
 }
@@ -131,7 +131,7 @@ test('非法正则报错', () => {
 test('基础地址 + 路径拼接', () => {
   assert.strictEqual(
     composeUrl('https://mikanime.tv/', '/RSS/Bangumi?bangumiId=3870&subgroupid=203'),
-    'https://mikanime.tv/RSS/Bangumi?bangumiId=3870&subgroupid=203'
+    'https://mikanime.tv/RSS/Bangumi?bangumiId=3870&subgroupid=203',
   );
   assert.strictEqual(composeUrl('https://mikanime.tv', 'RSS/x'), 'https://mikanime.tv/RSS/x');
   assert.strictEqual(composeUrl('https://mikanime.tv', 'https://other/x'), 'https://other/x');
@@ -155,7 +155,7 @@ test('文件名与大小格式化', () => {
 
 test('torrent infohash 解析', () => {
   const info = 'd4:name4:test6:lengthi1024ee';
-  const raw = Buffer.from('d8:announce3:url4:info' + info + 'e', 'utf8');
+  const raw = Buffer.from(`d8:announce3:url4:info${info}e`, 'utf8');
   const expected = crypto.createHash('sha1').update(info).digest('hex');
   const parsed = parseTorrentInfo(raw);
   assert.ok(parsed);
@@ -166,10 +166,10 @@ test('torrent infohash 解析', () => {
 
 test('magnet infohash（hex / base32）', () => {
   const hex = '0123456789abcdef0123456789abcdef01234567';
-  assert.strictEqual(magnetInfoHash('magnet:?xt=urn:btih:' + hex), hex);
+  assert.strictEqual(magnetInfoHash(`magnet:?xt=urn:btih:${hex}`), hex);
   assert.strictEqual(
     magnetInfoHash('magnet:?xt=urn:btih:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&dn=x'),
-    '0'.repeat(40)
+    '0'.repeat(40),
   );
   assert.strictEqual(magnetInfoHash('not-a-magnet'), '');
 });
@@ -177,11 +177,11 @@ test('magnet infohash（hex / base32）', () => {
 test('Mikan 追番地址推导番组主页', () => {
   assert.strictEqual(
     deriveHomeUrl('https://mikanime.tv/RSS/Bangumi?bangumiId=4059&subgroupid=203'),
-    'https://mikanime.tv/Home/Bangumi/4059'
+    'https://mikanime.tv/Home/Bangumi/4059',
   );
   assert.strictEqual(
     deriveHomeUrl('https://mikanani.me/Home/Bangumi/4059'),
-    'https://mikanani.me/Home/Bangumi/4059'
+    'https://mikanani.me/Home/Bangumi/4059',
   );
   assert.strictEqual(deriveHomeUrl('https://example.com/feed.xml'), '');
 });
@@ -261,7 +261,7 @@ test('解析 Mikan 单集页：番剧与字幕组', () => {
     <div class="bangumi-poster" style="background-image: url('/images/Bangumi/202610/fd74ed32.jpg?width=400');"></div>
     <p class="bangumi-title"><a class="w-other-c" href="/Home/Bangumi/4059#71">FX&#x6218;&#x58EB;&#x4E45;&#x7559;&#x7F8E;</a>
       <a href="/RSS/Bangumi?bangumiId=4059&subgroupid=71" class="mikan-rss">RSS</a></p>`;
-  const ep = parseEpisodePage(html, 'https://mikanani.me/Home/Episode/' + 'a'.repeat(40));
+  const ep = parseEpisodePage(html, `https://mikanani.me/Home/Episode/${'a'.repeat(40)}`);
   assert.strictEqual(ep.bangumiId, '4059');
   assert.strictEqual(ep.subgroupId, '71');
   assert.strictEqual(ep.title, 'FX战士久留美');
@@ -613,13 +613,13 @@ test('硬链接：正片/字幕识别与规划', () => {
         const h = Buffer.alloc(512);
         h.write(name.slice(0, 99), 0, 'utf8');
         h.write('0000644\0', 100, 'utf8');
-        h.write(data.length.toString(8).padStart(11, '0') + '\0', 124, 'utf8');
+        h.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124, 'utf8');
         h.write(type, 156, 'utf8');
         h.write('ustar\0', 257, 'utf8');
         h.write('00', 263, 'utf8');
         let sum = 0;
         for (const b of h) sum += b;
-        h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'utf8');
+        h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'utf8');
         blocks.push(h, data, Buffer.alloc((512 - (data.length % 512)) % 512));
       };
       add('subs/01.ass', Buffer.from('tar sub'), '0');

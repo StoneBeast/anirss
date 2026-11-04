@@ -32,14 +32,14 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 function send(method, params) {
   return new Promise((resolve, reject) => {
     const id = nextId++;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('timeout ' + method)); }, 15000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method}`)); }, 15000);
     pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
     ws.send(JSON.stringify({ id, method, params: params || {} }));
   });
 }
 
 async function connect() {
-  const targets = await (await fetch(CDP + '/json/list')).json();
+  const targets = await (await fetch(`${CDP}/json/list`)).json();
   const page = targets.find((t) => t.type === 'page');
   if (!page) throw new Error('没有可用的页面 target');
   ws = new WebSocket(page.webSocketDebuggerUrl);
@@ -97,14 +97,14 @@ async function pressEscape() {
 
 function check(name, ok, detail) {
   if (ok) pass.push(name);
-  else fail.push(name + (detail ? ' — ' + detail : ''));
+  else fail.push(name + (detail ? ` — ${detail}` : ''));
 }
 
-const modalOpen = () => evaluate(`!!document.querySelector('#modal-root form#path-form')`);
+const modalOpen = () => evaluate('!!document.querySelector(\'#modal-root form#path-form\')');
 
 /** 打开「新增存储路径」弹窗，并返回遮罩/卡片/输入框的关键坐标 */
 async function openModal() {
-  await evaluate(`document.querySelector('#view [data-action="open-path"]').click()`);
+  await evaluate('document.querySelector(\'#view [data-action="open-path"]\').click()');
   await sleep(320); // 越过 250ms 的开窗保护窗口
   const geo = await evaluate(`(() => {
     const bd = document.querySelector('#modal-root .modal-backdrop');
@@ -133,7 +133,7 @@ async function typeIntoInput(pt) {
 
 async function main() {
   await connect();
-  await send('Page.navigate', { url: APP + '/#/library' });
+  await send('Page.navigate', { url: `${APP}/#/library` });
   await sleep(600);
   // 同 URL 只有 hash 变化时浏览器不会重载文档，必须显式重载才能拿到最新的 app.js
   await send('Page.reload', { ignoreCache: true });
@@ -141,7 +141,7 @@ async function main() {
 
   // 等首屏数据到位（站点页有「新增存储路径」按钮）
   for (let i = 0; i < 40; i++) {
-    if (await evaluate(`!!document.querySelector('#view [data-action="open-path"]')`)) break;
+    if (await evaluate('!!document.querySelector(\'#view [data-action="open-path"]\')')) break;
     await sleep(250);
   }
 
@@ -154,11 +154,11 @@ async function main() {
   // 2. 填过内容点遮罩 → 不关，也不弹提示
   geo = await openModal();
   await typeIntoInput(geo.input);
-  check('输入后表单标记为已编辑', await evaluate(`!!document.querySelector('#modal-root #path-name').value`));
+  check('输入后表单标记为已编辑', await evaluate('!!document.querySelector(\'#modal-root #path-name\').value'));
   await clickAt(geo.backdrop[0], geo.backdrop[1]);
   check('填过内容点遮罩 → 不关', await modalOpen());
   check('填过内容点遮罩 → 不弹提示', await evaluate(
-    `![...document.querySelectorAll('.toast-text')].some((e) => e.textContent.includes('表单已填写'))`,
+    '![...document.querySelectorAll(\'.toast-text\')].some((e) => e.textContent.includes(\'表单已填写\'))',
   ));
 
   // 3. 在输入框里按下、拖到弹窗外松手 → 不关（以前这里是主要误触路径）
@@ -176,35 +176,35 @@ async function main() {
   // 6. 填过内容点「取消」→ 关
   geo = await openModal();
   await typeIntoInput(geo.input);
-  await evaluate(`document.querySelector('#modal-root form#path-form [data-action="close-modal"]').click()`);
+  await evaluate('document.querySelector(\'#modal-root form#path-form [data-action="close-modal"]\').click()');
   await sleep(150);
   check('填过内容点「取消」→ 关闭', !(await modalOpen()));
 
   // 收尾：把输入留下的 toast 清掉
-  await evaluate(`document.querySelectorAll('.toast').forEach((t) => t.remove())`);
+  await evaluate('document.querySelectorAll(\'.toast\').forEach((t) => t.remove())');
 
   // 7. 搜索弹窗：没有秒表 / 步骤说明，历史记录可显示与清空
   // 站点已内置，无需再临时创建站点；直接进追番页打开搜索弹窗
-  await evaluate(`localStorage.setItem('anirss:search-history', JSON.stringify(['久留美', '芙莉莲']))`);
-  await evaluate(`location.hash = '#/subs'`);
+  await evaluate('localStorage.setItem(\'anirss:search-history\', JSON.stringify([\'久留美\', \'芙莉莲\']))');
+  await evaluate('location.hash = \'#/subs\'');
   await sleep(400);
-  await evaluate(`document.querySelector('#view [data-action="open-search"]').click()`);
+  await evaluate('document.querySelector(\'#view [data-action="open-search"]\').click()');
   await sleep(250);
-  check('搜索弹窗打开', await evaluate(`!!document.querySelector('#search-form')`));
+  check('搜索弹窗打开', await evaluate('!!document.querySelector(\'#search-form\')'));
   check('搜索弹窗没有秒表/步骤说明', await evaluate(
-    `!document.querySelector('#modal-root .search-elapsed') && !document.querySelector('#modal-root .search-progress-steps')`,
+    '!document.querySelector(\'#modal-root .search-elapsed\') && !document.querySelector(\'#modal-root .search-progress-steps\')',
   ));
-  check('搜索历史显示 2 条', await evaluate(`document.querySelectorAll('#search-history .chip-btn').length === 2`));
-  await evaluate(`document.querySelector('#search-history [data-action="search-history-clear"]').click()`);
+  check('搜索历史显示 2 条', await evaluate('document.querySelectorAll(\'#search-history .chip-btn\').length === 2'));
+  await evaluate('document.querySelector(\'#search-history [data-action="search-history-clear"]\').click()');
   await sleep(150);
-  check('清除搜索历史', await evaluate(`document.querySelectorAll('#search-history .chip-btn').length === 0`));
-  await evaluate(`localStorage.removeItem('anirss:search-history')`);
-  await evaluate(`document.querySelector('#modal-root [data-action="close-modal"]').click()`);
+  check('清除搜索历史', await evaluate('document.querySelectorAll(\'#search-history .chip-btn\').length === 0'));
+  await evaluate('localStorage.removeItem(\'anirss:search-history\')');
+  await evaluate('document.querySelector(\'#modal-root [data-action="close-modal"]\').click()');
   await sleep(150);
 
   console.log('');
-  for (const name of pass) console.log('✓ ' + name);
-  for (const name of fail) console.log('✗ ' + name);
+  for (const name of pass) console.log(`✓ ${name}`);
+  for (const name of fail) console.log(`✗ ${name}`);
   console.log('');
   if (fail.length) {
     console.log(`遮罩点击保护：${fail.length} 项未通过`);

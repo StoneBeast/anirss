@@ -12,14 +12,14 @@ const { Engine } = require('./engine');
 const { destroyAll: destroyAgents } = require('./agents');
 const {
   APP_NAME, APP_VERSION, uid, nowMs, httpError, badRequest,
-  normalizeBaseUrl, composeUrl, parseBool, truncate, ALLOW_CUSTOM_BASES,
+  normalizeBaseUrl, composeUrl, ALLOW_CUSTOM_BASES,
 } = require('./util');
 
 const SERVER_DIR = __dirname;
 const APP_DIR = path.resolve(SERVER_DIR, '..');
 const WWW = path.join(APP_DIR, 'www');
 // 环境变量统一用 ANIRSS_*；同时兼容旧的 QBRSS_*（1.7.0 之前的部署脚本）
-const env = (name) => process.env['ANIRSS_' + name] || process.env['QBRSS_' + name] || '';
+const env = (name) => process.env[`ANIRSS_${name}`] || process.env[`QBRSS_${name}`] || '';
 const SOCKET = env('SOCKET') ||
   (process.env.TRIM_APPDEST ? path.join(process.env.TRIM_APPDEST, 'app.sock') : '');
 const IS_FNOS = !!(process.env.TRIM_APPDEST || process.env.TRIM_SERVICE_PORT);
@@ -28,7 +28,7 @@ const PORT = env('PORT')
   ? Number(env('PORT'))
   : (Number(process.env.TRIM_SERVICE_PORT) || (SOCKET ? 0 : 8777));
 const HOST = env('HOST') || (IS_FNOS ? '0.0.0.0' : '127.0.0.1');
-const GATEWAY_PREFIX = '/app/' + (process.env.TRIM_APPNAME || APP_NAME);
+const GATEWAY_PREFIX = `/app/${process.env.TRIM_APPNAME || APP_NAME}`;
 const BODY_LIMIT = 2 * 1024 * 1024;
 
 /** 1.7.0 起应用 id 由 qbrss 改为 anirss；首次启动时把旧目录的数据搬过来 */
@@ -215,7 +215,7 @@ const STATIC_CACHE = new Map();
 const GZIP_LEVEL = 6;
 
 function staticEtag(st) {
-  return 'W/"' + st.size.toString(36) + '-' + Math.round(st.mtimeMs).toString(36) + '"';
+  return `W/"${st.size.toString(36)}-${Math.round(st.mtimeMs).toString(36)}"`;
 }
 
 function isCompressibleType(type) {
@@ -660,10 +660,10 @@ function handleRequest(req, res) {
 
   // 统一网关可能保留前缀，也可能已经剥离；两种都兼容
   if (pathname === GATEWAY_PREFIX) {
-    res.writeHead(302, { Location: GATEWAY_PREFIX + '/' });
+    res.writeHead(302, { Location: `${GATEWAY_PREFIX}/` });
     return res.end();
   }
-  if (pathname.startsWith(GATEWAY_PREFIX + '/')) {
+  if (pathname.startsWith(`${GATEWAY_PREFIX}/`)) {
     pathname = pathname.slice(GATEWAY_PREFIX.length);
   }
 
@@ -704,7 +704,7 @@ function start() {
   const listen = (server, target, cb) => {
     const isTcp = target && typeof target === 'object';
     server.once('error', (e) => {
-      console.error(`[anirss] 监听失败 ${typeof target === 'string' ? target : HOST + ':' + PORT}：${e.message}`);
+      console.error(`[anirss] 监听失败 ${typeof target === 'string' ? target : `${HOST}:${PORT}`}：${e.message}`);
       process.exitCode = 1;
       // fnOS 桌面入口现在是独立端口，端口占用时直接失败，避免“图标能开但浏览器打不开”
       if (IS_FNOS && isTcp) {
@@ -723,7 +723,7 @@ function start() {
       if (HOST === '0.0.0.0') {
         console.log(`[anirss] 浏览器访问：http://<NAS-IP>:${PORT}`);
       } else {
-        console.log('[anirss] 本机访问：http://127.0.0.1:' + PORT);
+        console.log(`[anirss] 本机访问：http://127.0.0.1:${PORT}`);
       }
     });
   }
@@ -745,7 +745,7 @@ function start() {
   console.log(`[anirss] version ${APP_VERSION}`);
   console.log(`[anirss] data dir ${DATA_DIR}`);
   engine.start();
-  engine.log('info', `HTTP 服务已启动（${SOCKET ? 'socket ' + SOCKET : 'port ' + PORT}）`);
+  engine.log('info', `HTTP 服务已启动（${SOCKET ? `socket ${SOCKET}` : `port ${PORT}`}）`);
 
   let closing = false;
   const shutdown = (signal) => {
