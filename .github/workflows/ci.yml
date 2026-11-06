@@ -1,7 +1,7 @@
 name: CI
 
-# 每次推到 main / PR 都会跑：代码风格、单元测试、烟测、性能自检，并真的构建一次 FPK，
-# 保证「风格统一」和「能打包」在合并前就被验证过。
+# 每次推到 main / PR 都会跑：代码风格、单元测试、烟测、性能自检、部署矩阵，并真的构建、
+# 启动一次 FPK 与 Docker 镜像，保证「风格统一」「能打包」「打得开」在合并前就被验证过。
 on:
   push:
     branches: [main]
@@ -57,6 +57,43 @@ jobs:
       - name: 性能自检
         run: node dev/perf-check.js
 
+  deploy:
+    name: 部署矩阵（release / docker / FPK / 旧数据迁移）
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 会真的 build-fpk、解开 app.tgz、走 cmd/main start|stop，并按 Dockerfile 的
+      # COPY 清单组装一份最小目录来启动；任何一个形态起不来或配置没落盘都会失败。
+      - name: 部署契约
+        run: node dev/deploy-test.js
+
+  ui:
+    name: 浏览器交互（headless Chrome）
+    runs-on: ubuntu-latest
+    needs: test
+    # 5 个交互脚本串行跑，实测约 3~4 分钟；超时给足余量
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # run-ui.js 自己起演示数据、8777 实例和 headless Chrome，跑完回收
+      - name: 交互用例
+        run: node dev/run-ui.js
+
   package:
     name: 构建 FPK
     runs-on: ubuntu-latest
@@ -85,7 +122,7 @@ jobs:
           retention-days: 7
 
   docker:
-    name: 验证镜像能构建
+    name: 镜像能构建也能跑
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,12 +130,45 @@ jobs:
       - name: 准备 buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: 构建镜像（不推送）
+      - name: 构建镜像（不推送，加载到本地）
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
           push: false
+          load: true
+          tags: anirss:ci
           cache-from: type=gha,scope=ci
           cache-to: type=gha,mode=max,scope=ci
+
+      # 只 build 不 run 的话，「镜像能起、/data 能写、重启后配置还在」都测不到。
+      - name: 真跑容器（健康检查 + 配置持久化）
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-data && chmod 777 .ci-data
+          docker run -d --name anirss-ci -p 18777:8777 -v "$PWD/.ci-data:/data" anirss:ci
+          trap 'docker rm -f anirss-ci >/dev/null 2>&1 || true' EXIT
+
+          wait_ready() {
+            for _ in $(seq 1 80); do
+              if curl -fsS http://127.0.0.1:18777/api/health >/dev/null 2>&1; then return 0; fi
+              sleep 0.5
+            done
+            echo "容器没有在预期时间内就绪" >&2
+            docker logs anirss-ci >&2
+            return 1
+          }
+
+          wait_ready
+          curl -fsS http://127.0.0.1:18777/api/health
+          curl -fsS http://127.0.0.1:18777/api/health | grep -q '"app":"anirss"'
+
+          # 写一份配置，重启容器后必须仍在（验证 /data 挂载与退出落盘）
+          curl -fsS -X PUT http://127.0.0.1:18777/api/qb/config \
+            -H 'Content-Type: application/json' \
+            -d '{"baseUrl":"http://127.0.0.1:18099","username":"docker-check","password":"secret"}' >/dev/null
+          docker restart anirss-ci >/dev/null
+          wait_ready
+          curl -fsS http://127.0.0.1:18777/api/state | grep -q '"username":"docker-check"'
+          echo "容器启动、健康检查、配置持久化均通过"

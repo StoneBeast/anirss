@@ -7,6 +7,10 @@
   "scripts": {
     "start": "node app/server/index.js",
     "test": "node dev/unit.js && node dev/smoke.js && node dev/perf-check.js",
+    "test:deploy": "node dev/deploy-test.js",
+    "test:ui": "node dev/run-ui.js",
+    "verify": "node dev/unit.js && node dev/smoke.js && node dev/perf-check.js && node dev/deploy-test.js",
+    "verify:all": "npm run verify && npm run test:ui",
     "lint": "eslint . && stylelint \"app/www/**/*.css\"",
     "lint:fix": "eslint . --fix && stylelint \"app/www/**/*.css\" --fix"
   },
