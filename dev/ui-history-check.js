@@ -261,6 +261,14 @@ async function main() {
   const i0 = await snapshot();
   await evaluate('document.querySelector(\'[data-action="open-search"]\').click()');
   await sleep(700);
+  // 固定用本地演示站点：默认站点是真实蜜柑，没外网时搜索必空，用例就变成环境依赖
+  await evaluate(`(() => {
+    const sel = document.querySelector('#search-base');
+    if (!sel) return 'missing';
+    sel.value = 'b_demo';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    return sel.value;
+  })()`);
   await evaluate('(() => { document.querySelector(\'#search-q\').value = \'药屋\'; })()');
   await evaluate('document.querySelector(\'#search-form button[type="submit"]\').click()');
   check('搜索结果里有字幕组按钮', await waitFor('document.querySelectorAll(\'.subgroup-chip\').length > 0', 15000), true);

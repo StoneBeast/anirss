@@ -63,7 +63,9 @@ async function main() {
   console.log(`✓ 弹窗打开：${modalTitle.trim()}`);
 
   // 构造一个 zip 塞进文件输入框（DOM.setFileInputFiles 触发 change）
-  const zipPath = path.join(__dirname, '..', '..', 'tmp', 'ui-subs-test.zip');
+  const zipDir = path.join(__dirname, '..', 'tmp');
+  fs.mkdirSync(zipDir, { recursive: true });
+  const zipPath = path.join(zipDir, 'ui-subs-test.zip');
   fs.writeFileSync(zipPath, buildZip([
     { name: 'chs/01.ass', data: '浏览器上传的简体字幕', utf8Name: true },
     { name: 'readme.txt', data: 'skip me', utf8Name: true },
