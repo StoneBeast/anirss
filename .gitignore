@@ -14,6 +14,9 @@ tmp/
 .DS_Store
 Thumbs.db
 
+# 编辑器/助手在本机留下的会话状态（含本机路径），不进仓库
+.dsh-ops/
+
 # Python 缓存（dev/ 下的脚本会生成）
 __pycache__/
 *.pyc
