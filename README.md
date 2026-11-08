@@ -192,11 +192,14 @@ docker run -d --name anirss -p 8777:8777 -v "$PWD/data:/data" anirss:local
 ## 开发
 
 ```bash
-node dev/unit.js        # 单元测试
-node dev/smoke.js       # 端到端烟测，内置假 qB 和假 RSS
-node dev/demo.js        # 生成演示数据
-npm install && npm run lint   # 代码风格检查（ESLint + Stylelint，Node ≥ 20.19）
+npm run verify          # 单元 + 烟测 + 性能 + 部署矩阵（真的打 FPK、解包、起服务）
+npm run verify:all      # 再加浏览器交互（自动起演示实例与 headless Chrome）
+npm run lint            # 代码风格检查（ESLint + Stylelint，Node ≥ 20.19）
+node dev/demo.js        # 只想要一份演示数据时
 ```
+
+部署矩阵覆盖 release / docker / FPK / 旧数据迁移四种形态，细节见
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 
 打包、目录结构和接口清单见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 

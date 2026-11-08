@@ -10,18 +10,68 @@
 
 ## 测试
 
+### 一条命令
+
+```bash
+npm test            # 单元 + 烟测 + 性能，约 20s；改完逻辑先跑这个
+npm run verify      # 再加部署矩阵（真的打 FPK、真的按部署形态起服务），CI 同款
+npm run verify:all  # 再加浏览器交互（自动起演示实例 + headless Chrome）
+npm run lint        # 代码风格
+```
+
+`verify` / `verify:all` 只是把下面这些脚本串起来，每一步都能单独跑、单独看日志：
+
 ```bash
 node dev/unit.js        # 单元测试（31 项）：RSS 2.0 / Atom、实体解码、正则、URL 拼接、infohash、集数识别、硬链接规划、导入导出
 node dev/smoke.js       # 端到端烟测（54 项）：拉起真实服务 + 内置假 qBittorrent / 假 RSS 站点
 node dev/perf-check.js  # 性能行为验证：静态资源与 /api/state 的 gzip、ETag/304、写盘合并
-node dev/ui-actions.js  # 浏览器交互测试（75 项）：需要 Chrome CDP 9222 + 演示实例 8777
-node dev/ui-subs-check.js # 字幕弹窗抽查：弹窗打开、zip 上传入库、列表刷新（同上前提）
-node dev/ui-patch-check.js # keyed patch 抽查：软刷新后列表节点复用、滚动不跳（同上前提）
-node dev/ui-modal-check.js # 弹窗误触抽查：点表单旁边/拖选松手到外面不会把表单关掉（同上前提，可用 ANIRSS_APP 指向别的实例）
-node dev/ui-history-check.js # 返回栈抽查：站内切页不压历史、弹层打开时返回先关弹层（同上前提）
-node dev/ui-shot.js     # 重新生成 docs/ 下的截图
-node dev/ui-empty.js    # 空数据首启引导截图
+node dev/deploy-test.js # 部署矩阵：release / docker / FPK / 旧数据迁移（见下）
+node dev/run-ui.js      # 浏览器交互：自动起演示数据、8777 实例和 headless Chrome，跑完自动关
 ```
+
+### 部署矩阵：`node dev/deploy-test.js`
+
+部署方式变多以后，最容易漏的不是业务逻辑，而是「打包产物在另一种形态下起不来」。
+这个脚本把同一份源码按各种形态装进临时目录，用各自的真实启动方式拉起，再跑同一套部署契约：
+
+| 形态 | 目录怎么来 | 用什么启动 | 主要证明什么 |
+| --- | --- | --- | --- |
+| `release` | 拷 `app/` + `start.sh` / `start.cmd` | `start.sh` / `start.cmd` | 解压即用的裸 Node 部署能跑 |
+| `docker` | 严格按 Dockerfile 的 COPY 清单（只有 `app/` + `package.json`） | `node app/server/index.js` + 镜像 ENV | 镜像里没有「少拷了文件」，`HOST=0.0.0.0` 与独立 `/data` 正常 |
+| `fpk` | 真的执行 `python dev/build-fpk.py`，解开外层 tar 与 `app.tgz` | 先直接跑包内 `server/index.js`；POSIX 上再走 `cmd/main start|status|stop` | 安装包结构完整、生命周期脚本可用、pid/日志/退出正常 |
+| `migration` | 旧版 `QBRSS_DATA` 目录 | `node` | 1.7.0 的旧数据能被首次启动自动搬过来 |
+
+每个形态都会检查：`/api/health` 的 app/版本、首页 ETag → 304、`app.js` gzip、`/api/state` 里的
+`dataDir` 就是配置的目录、写一份 qB 配置后能落盘、退出（POSIX 走 SIGTERM）后配置还在、重启后仍在、
+以及**安装目录零写入**（运行时不往程序目录里写缓存/配置）。
+
+```bash
+node dev/deploy-test.js                    # 全部形态
+node dev/deploy-test.js --modes release,docker
+node dev/deploy-test.js --modes fpk --keep # 保留临时目录，翻 build 与运行日志
+ANIRSS_PYTHON=python3 node dev/deploy-test.js
+```
+
+CI 里跑的是同一份脚本；Docker job 还会真的 `docker run` 一个容器，验证健康检查与 `/data` 重启持久化。
+
+**还需要真机确认的**（脚本替代不了，但已经只占少数）：fnOS 的应用中心授权（「应用设置 → 访问权限」）、
+真实 qBittorrent 5.x、跨硬盘硬链接、NAS 上的实际 uid/gid 与目录 ACL、以及网关 `/app/anirss` 反向代理。
+
+### 浏览器交互：`node dev/run-ui.js`
+
+以前跑 `dev/ui-*.js` 要先手工起演示数据、起 8777 实例、再手动开一个带 `--remote-debugging-port=9222` 的 Chrome。
+现在一条命令全包：自动跑 `dev/demo.js`（假 qB 18080 / 假 RSS 18081）、起 8777 实例、启动 headless Chrome，
+依次执行交互用例，最后回收所有进程。
+
+```bash
+node dev/run-ui.js                              # ui-actions / subs / patch / modal / history
+node dev/run-ui.js --only ui-modal-check,ui-history-check
+node dev/run-ui.js --headed                     # 有桌面时看着它点
+ANIRSS_CHROME=/path/to/chrome node dev/run-ui.js
+```
+
+注意：8777 / 9222 / 18080 / 18081 会被占用，跑之前先关掉手头的演示实例。
+`ui-shot.js`（会改 `docs/` 截图）和 `ui-empty.js`（需要另一个空数据实例）不在默认列表里，仍按原方式手动跑。
 
 ### 性能要点
 

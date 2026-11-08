@@ -1,6 +1,6 @@
 name: Release
 
-# 打 tag（v1.13.3）就自动：跑测试 → 构建 FPK → 发 GitHub Release（附 SHA256SUMS）
+# 打 tag（v1.13.3）就自动：跑测试与部署矩阵 → 构建 FPK → 发 GitHub Release（附 SHA256SUMS）
 # → 顺手把 Docker 镜像推到 GHCR（amd64 + arm64）。
 #
 # 手动触发（workflow_dispatch）只构建 FPK 并作为 artifact 留存，不发版、不推镜像；
@@ -37,6 +37,10 @@ jobs:
         with:
           node-version: '24'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: 单元测试
         run: node dev/unit.js
 
@@ -45,6 +49,9 @@ jobs:
 
       - name: 性能自检
         run: node dev/perf-check.js
+
+      - name: 部署矩阵（打包产物真跑）
+        run: node dev/deploy-test.js
 
   fpk:
     name: 构建并发布 FPK
