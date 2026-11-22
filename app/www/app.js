@@ -89,7 +89,6 @@
     searchPending: false,
     searchStage: '',
     searchSeq: 0,
-    guessResult: null,
     confirmResolve: null,
     refreshing: false,
     loadError: '',
@@ -1451,28 +1450,6 @@
       <div class="card">
         <div class="card-head">
           <div>
-            <div class="card-title">集数识别</div>
-            <div class="card-sub">从文件名 / 种子名 / 磁力名猜集数，支持 [12]、- 12、第 12 集、EP12、01-12 合集等写法</div>
-          </div>
-        </div>
-        <div class="card-body">
-          <form id="guess-form" class="form" autocomplete="off">
-            <div class="field">
-              <label class="field-label" for="guess-text">文件名 / 磁力名 <span class="tip">每行一条，最多 50 条</span></label>
-              <textarea class="input mono" id="guess-text" rows="2" placeholder="[LoliHouse] 某番剧 - 07 [WebRip 1080p HEVC-10bit AAC][简繁内封]" spellcheck="false"></textarea>
-            </div>
-            <div class="btn-row">
-              <button class="btn" type="submit">${icon('search')}识别集数</button>
-              <span class="small faint">只在本机做字符串解析，不联网</span>
-            </div>
-          </form>
-          <div id="guess-result">${guessResultHTML()}</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-head">
-          <div>
             <div class="card-title">新增补番</div>
           </div>
         </div>
@@ -1616,37 +1593,6 @@
       ${extras.length
     ? `<div class="extra-list">${extras.map(extraCardHTML).join('')}</div>`
     : '<div class="qb-empty">还没有补番记录。粘贴磁力链接或选择 .torrent 文件即可单次下载。</div>'}`;
-  }
-
-  function guessResultHTML() {
-    const r = S.guessResult;
-    if (!r) return '';
-    if (!r.results || !r.results.length) return '<div class="qb-empty">没有可识别的文本</div>';
-    return `<div class="guess-list">${r.results.map((x) => `
-      <div class="guess-row">
-        <span class="guess-label ${x.kind === 'single' ? 'ok' : (x.kind ? 'special' : 'none')}">${esc(x.label)}</span>
-        <span class="guess-text" title="${esc(x.input)}">${esc(x.input)}</span>
-        ${x.source ? `<span class="small faint guess-src">命中「${esc(x.source)}」</span>` : ''}
-      </div>`).join('')}</div>`;
-  }
-
-  async function runGuess(form) {
-    const text = $('#guess-text', form)?.value.trim() || '';
-    if (!text) {
-      toast('请粘贴文件名、种子名或磁力名', 'warn');
-      return;
-    }
-    const btn = form.querySelector('button[type="submit"]');
-    await withBusy(btn, async () => {
-      try {
-        const r = await api('guess-episode', { method: 'POST', body: { text } });
-        S.guessResult = r;
-        const box = $('#guess-result');
-        if (box) box.innerHTML = guessResultHTML();
-      } catch (e) {
-        toast(e.message, 'error');
-      }
-    });
   }
 
   /** 前端版硬链接目标渲染：${name} / ${season}，以及预设里的数字变量（1=名称，其余=季） */
@@ -4487,9 +4433,6 @@
     } else if (form.id === 'hardlink-form') {
       e.preventDefault();
       saveHardlinkSettings(form);
-    } else if (form.id === 'guess-form') {
-      e.preventDefault();
-      runGuess(form);
     } else if (form.id === 'search-form') {
       e.preventDefault();
       runSearch(form);
