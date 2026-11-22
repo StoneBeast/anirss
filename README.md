@@ -4,7 +4,7 @@ AniRSS 是一个自托管的 RSS 追番工具：选内置站点、填追番路�
 
 只用 Node.js 内置模块，没有 npm 依赖，Node 18 以上就能跑。
 
-![version](https://img.shields.io/badge/version-1.13.4-2f81f7)
+![version](https://img.shields.io/badge/version-1.13.5-2f81f7)
 ![node](https://img.shields.io/badge/node-%E2%89%A518-3c873a)
 ![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-6f42c1)
@@ -52,7 +52,7 @@ bash start.sh
 | Docker Hub | `stonebeast/anirss` |
 | GHCR | `ghcr.io/stonebeast/anirss` |
 
-`:latest` 跟随最新正式版，也可以固定版本（如 `1.13.4`）。
+`:latest` 跟随最新正式版，也可以固定版本（如 `1.13.5`）。
 
 #### 1. 准备数据目录
 
@@ -67,7 +67,7 @@ sudo chown -R 1000:1000 ./data   # 镜像内以 node（uid/gid 1000）运行
 ```bash
 docker pull stonebeast/anirss:latest
 # 固定版本：
-docker pull stonebeast/anirss:1.13.4
+docker pull stonebeast/anirss:1.13.5
 ```
 
 #### 3. 运行

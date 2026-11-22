@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 
 const APP_NAME = 'anirss';
-const APP_VERSION = '1.13.4';
+const APP_VERSION = '1.13.5';
 // 站点已内置（蜜柑计划 / 蜜柑计划(境外)），不再支持自定义。smoke / demo 等
 // 本地测试需要一个指向本机假 RSS 的站点，显式设置 ANIRSS_DEV_ALLOW_CUSTOM_BASES=1
 // 时才保留配置文件里的非内置站点、放开 bases 增删改接口。名字里带 DEV 是为了

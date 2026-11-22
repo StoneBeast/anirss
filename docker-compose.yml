@@ -7,7 +7,7 @@
 # 镜像：
 #   Docker Hub  stonebeast/anirss:latest
 #   GHCR        ghcr.io/stonebeast/anirss:latest
-# 固定版本把 :latest 换成 :1.13.4。两个仓库的镜像内容一致，拉不动时可换另一个。
+# 固定版本把 :latest 换成 :1.13.5。两个仓库的镜像内容一致，拉不动时可换另一个。
 
 services:
   anirss:
