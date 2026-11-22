@@ -2205,19 +2205,7 @@ html[data-theme='light'] .search-skeleton .sk-chip { background: #eef2f7; }
 html[data-theme='light'] .search-pending { background: #f2f9ff; border-color: #cfe6f7; }
 
 
-/* ---------------- Episode guess ---------------- */
 .t-ep { vertical-align: 1px; margin-right: 2px; }
-.guess-list { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
-.guess-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: rgb(255, 255, 255, 0.018); }
-.guess-label { flex: 0 0 auto; display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 640; background: var(--accent-soft); color: var(--accent); }
-.guess-label.special { background: rgb(255, 189, 92, 0.14); color: var(--amber); }
-.guess-label.none { background: rgb(255, 255, 255, 0.06); color: var(--faint); }
-.guess-text { flex: 1; min-width: 180px; font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
-.guess-src { flex: 0 0 auto; }
-html[data-theme='light'] .guess-row { background: #fff; border-color: #e6edf4; }
-html[data-theme='light'] .guess-label { background: rgb(11, 131, 214, 0.1); color: #0b83d6; }
-html[data-theme='light'] .guess-label.special { background: rgb(214, 154, 40, 0.14); color: #a4711a; }
-html[data-theme='light'] .guess-label.none { background: #f2f5f8; color: #8a9cad; }
 
 /* ---------------- 渲染性能 ----------------
    长列表的卡片滚动出视口后跳过布局与绘制（containment），

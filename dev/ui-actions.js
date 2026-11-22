@@ -332,10 +332,8 @@ async function main() {
   ok('改目录后重新硬链接成功', fs.existsSync(path.join(movedRoot, '葬送的芙莉莲', 'Season 2', FRIEREN_FILE)),
     path.join(movedRoot, '葬送的芙莉莲', 'Season 2', FRIEREN_FILE));
 
-  await setValue('#guess-text', '[LoliHouse] 某番剧 - 07 [WebRip 1080p HEVC-10bit AAC]\n某番剧 第12集 [1080p]\n[Sub] 某番剧 [01-12合集][1080p]');
-  await click('#guess-form button[type="submit"]', 1000);
-  const guessText = await ev("document.querySelector('#guess-result')?.innerText || ''");
-  ok('集数识别工具可用', guessText.includes('第 7 集') && guessText.includes('第 12 集') && guessText.includes('第 1–12 集'), guessText.replace(/\n/g, ' | '));
+  const firstExtraCardTitle = await ev("document.querySelector('#view .card-title')?.textContent.trim()");
+  ok('补番页首张卡片为新增补番', firstExtraCardTitle === '新增补番', firstExtraCardTitle);
   const extraHash = 'f'.repeat(40);
   const uiHlDest = path.join(DEMO_DATA, 'library-ui');
   await setValue('#x-magnets', `magnet:?xt=urn:btih:${extraHash}&dn=UI+Extra+Test`);
@@ -385,7 +383,6 @@ async function main() {
   await setValue('#f-name', '草稿保留测试');
   await setValue('#x-category', 'anime');
   await setValue('#x-tags', 'tag1');
-  await setValue('#guess-text', '某番剧 第03集 [1080p]');
   await click('.page-title', 200); // 先失焦，这样轮询才会真的重绘
   await click('[data-action="extras-status"]', 1400);
   const readDraft = `(() => ({
@@ -393,12 +390,11 @@ async function main() {
     name: document.querySelector('#f-name') ? document.querySelector('#f-name').value : '',
     category: document.querySelector('#x-category') ? document.querySelector('#x-category').value : '',
     tags: document.querySelector('#x-tags') ? document.querySelector('#x-tags').value : '',
-    guess: document.querySelector('#guess-text') ? document.querySelector('#guess-text').value : '',
     savePath: document.querySelector('#f-savepath') ? document.querySelector('#f-savepath').value : '',
   }))()`;
   const draft1 = await ev(readDraft);
   ok('刷新状态不清空补番表单', draft1.magnets.includes('draft-keep') && draft1.name === '草稿保留测试'
-    && draft1.category === 'anime' && draft1.tags === 'tag1' && draft1.guess.includes('第03集')
+    && draft1.category === 'anime' && draft1.tags === 'tag1'
     && draft1.savePath === '/volume1/media/anime', JSON.stringify(draft1));
 
   await sleep(13500); // 后台每 12 秒轮询一次
@@ -452,7 +448,7 @@ async function main() {
     && keptDraft.category === 'draft-cat', JSON.stringify(keptDraft));
 
   await ev(`(() => {
-    ['#x-magnets', '#f-name', '#x-category', '#x-tags', '#guess-text'].forEach((sel) => {
+    ['#x-magnets', '#f-name', '#x-category', '#x-tags'].forEach((sel) => {
       const el = document.querySelector(sel);
       if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
     });
