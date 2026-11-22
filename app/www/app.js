@@ -2533,7 +2533,6 @@
           <div class="card-head">
             <div>
               <div class="card-title">内置站点</div>
-              <div class="card-sub">暂不支持添加或修改</div>
             </div>
           </div>
           <div class="card-body" style="padding-top:12px">
@@ -2549,7 +2548,6 @@
                   </div>
                 </div>`;
   }).join('')}</div>
-            <div class="field-hint" style="margin-top:12px">站点由应用内置（当前功能围绕蜜柑计划展开），暂时无法自定义；新增追番时选择站点后填路径即可。</div>
           </div>
         </div>
 
@@ -2607,7 +2605,6 @@
           <div class="card-head">
             <div>
               <div class="card-title">qBittorrent WebUI</div>
-              <div class="card-sub">地址、账号和 TLS 选项保存在本机数据文件中</div>
             </div>
             <span class="status-pill" style="height:28px;font-size:10.5px">
               <span class="dot ${qb.verifiedAt ? 'green' : 'amber'}"></span>${qb.verifiedAt ? '已验证' : '未验证'}
@@ -2723,7 +2720,6 @@
             <div class="card-head">
               <div>
                 <div class="card-title">数据与日志</div>
-                <div class="card-sub">配置保存在应用私有数据目录</div>
               </div>
               <div class="row-actions">
                 <a class="btn btn-sm" href="${API}export">${icon('download')}导出配置</a>
