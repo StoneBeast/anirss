@@ -32,24 +32,24 @@
 
       <nav class="nav" id="nav" aria-label="主导航">
         <a href="#/overview" data-nav="overview">
-          <span class="nav-icon" data-icon="grid"></span><span>总览</span>
+          <span class="nav-icon" data-icon="nav-overview"></span><span>总览</span>
         </a>
         <a href="#/subs" data-nav="subs">
-          <span class="nav-icon" data-icon="rss"></span><span>追番</span>
+          <span class="nav-icon" data-icon="nav-subs"></span><span>追番</span>
           <span class="nav-count" id="nav-sub-count"></span>
         </a>
         <a href="#/extras" data-nav="extras">
-          <span class="nav-icon" data-icon="magnet"></span><span>补番</span>
+          <span class="nav-icon" data-icon="nav-extras"></span><span>补番</span>
           <span class="nav-count" id="nav-extra-count"></span>
         </a>
         <a href="#/downloads" data-nav="downloads">
-          <span class="nav-icon" data-icon="download"></span><span>下载记录</span>
+          <span class="nav-icon" data-icon="nav-downloads"></span><span>下载记录</span>
         </a>
         <a href="#/library" data-nav="library">
-          <span class="nav-icon" data-icon="folder"></span><span>站点与路径</span>
+          <span class="nav-icon" data-icon="nav-library"></span><span>站点与路径</span>
         </a>
         <a href="#/connection" data-nav="connection">
-          <span class="nav-icon" data-icon="plug"></span><span>连接设置</span>
+          <span class="nav-icon" data-icon="nav-connection"></span><span>连接设置</span>
         </a>
       </nav>
 
@@ -104,8 +104,9 @@
 
   <div id="drawer-root"></div>
   <div id="modal-root"></div>
+  <div id="motion-root" aria-hidden="true"></div>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
 
-  <script src="app.js" defer></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
