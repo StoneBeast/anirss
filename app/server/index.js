@@ -365,56 +365,56 @@ async function handleApi(req, res, pathname, query) {
   }
 
   if (pathname === '/api/extras' && method === 'GET') {
-    return sendJson(res, 200, { extras: engine.extrasPublic() });
+    return sendJson(res, 200, { extras: engine.extras.extrasPublic() });
   }
 
   if (pathname === '/api/extras' && method === 'POST') {
     const body = await readJson(req);
-    const extra = await engine.addExtra(body);
+    const extra = await engine.extras.addExtra(body);
     return sendJson(res, 201, { ok: true, extra });
   }
 
   if (pathname === '/api/extras/upload' && method === 'POST') {
     const body = await readJson(req, 12 * 1024 * 1024);
-    const extra = await engine.addExtraFile(body);
+    const extra = await engine.extras.addExtraFile(body);
     return sendJson(res, 201, { ok: true, extra });
   }
 
   if (pathname === '/api/extras/status' && method === 'POST') {
-    return sendJson(res, 200, await engine.extrasStatus());
+    return sendJson(res, 200, await engine.extras.extrasStatus());
   }
 
   if (pathname === '/api/hardlink' && method === 'PUT') {
     const body = await readJson(req);
-    return sendJson(res, 200, { ok: true, hardlink: engine.saveHardlink(body) });
+    return sendJson(res, 200, { ok: true, hardlink: engine.extras.saveHardlink(body) });
   }
   if (pathname === '/api/hardlink/probe' && method === 'GET') {
-    return sendJson(res, 200, { ok: true, probe: engine.probeHardlinkPath(query.path) });
+    return sendJson(res, 200, { ok: true, probe: engine.extras.probeHardlinkPath(query.path) });
   }
 
   const extraHardlinkMatch = pathname.match(/^\/api\/extras\/([^/]+)\/hardlink$/);
   if (extraHardlinkMatch && method === 'POST') {
-    return sendJson(res, 200, await engine.linkExtra(extraHardlinkMatch[1]));
+    return sendJson(res, 200, await engine.extras.linkExtra(extraHardlinkMatch[1]));
   }
   if (extraHardlinkMatch && method === 'PUT') {
     const body = await readJson(req);
-    return sendJson(res, 200, { ok: true, extra: engine.updateExtraHardlink(extraHardlinkMatch[1], body) });
+    return sendJson(res, 200, { ok: true, extra: engine.extras.updateExtraHardlink(extraHardlinkMatch[1], body) });
   }
 
   // 外挂字幕库：批量上传（文件/压缩包 base64）、链接自动抓取、删除
   const extraSubsUploadMatch = pathname.match(/^\/api\/extras\/([^/]+)\/subs\/upload$/);
   if (extraSubsUploadMatch && method === 'POST') {
     const body = await readJson(req, 64 * 1024 * 1024);
-    return sendJson(res, 200, await engine.addExtraSubsUpload(extraSubsUploadMatch[1], body));
+    return sendJson(res, 200, await engine.extras.addExtraSubsUpload(extraSubsUploadMatch[1], body));
   }
   const extraSubsFetchMatch = pathname.match(/^\/api\/extras\/([^/]+)\/subs\/fetch$/);
   if (extraSubsFetchMatch && method === 'POST') {
     const body = await readJson(req);
-    return sendJson(res, 200, await engine.addExtraSubsFromUrl(extraSubsFetchMatch[1], body));
+    return sendJson(res, 200, await engine.extras.addExtraSubsFromUrl(extraSubsFetchMatch[1], body));
   }
   const extraSubsMatch = pathname.match(/^\/api\/extras\/([^/]+)\/subs$/);
   if (extraSubsMatch && method === 'DELETE') {
-    return sendJson(res, 200, engine.removeExtraSubs(extraSubsMatch[1], {
+    return sendJson(res, 200, engine.extras.removeExtraSubs(extraSubsMatch[1], {
       name: query.name || '',
       all: query.all === '1' || query.all === 'true',
     }));
@@ -422,7 +422,7 @@ async function handleApi(req, res, pathname, query) {
 
   const extraMatch = pathname.match(/^\/api\/extras\/([^/]+)$/);
   if (extraMatch && method === 'DELETE') {
-    const result = await engine.deleteExtra(extraMatch[1], {
+    const result = await engine.extras.deleteExtra(extraMatch[1], {
       deleteTorrent: query.deleteTorrent === '1' || query.deleteTorrent === 'true',
       deleteFiles: query.deleteFiles === '1' || query.deleteFiles === 'true',
     });

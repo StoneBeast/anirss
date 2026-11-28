@@ -298,6 +298,11 @@ async function runContract(spec) {
     const asset = await rawGet(`${handle.url}/app.js`, { 'Accept-Encoding': 'gzip' });
     assert.strictEqual(asset.status, 200);
     assert.strictEqual(asset.headers['content-encoding'], 'gzip', 'app.js 应 gzip 传输');
+    for (const name of ['ui.mjs', 'extras-view.mjs']) {
+      const module = await rawGet(`${handle.url}/${name}`);
+      assert.strictEqual(module.status, 200, `${name} 应随包发布`);
+      assert.match(module.headers['content-type'] || '', /javascript/, `${name} 应以 JavaScript MIME 类型提供`);
+    }
     const css = await rawGet(`${handle.url}/style.css`);
     assert.strictEqual(css.status, 200, '静态样式应随包发布');
     ok('静态资源 · ETag 304 · gzip');
@@ -435,7 +440,7 @@ async function prepareFpk() {
   }
   const appdest = path.join(TMP, 'apps', 'anirss', 'target');
   extractTar(path.join(outer, 'app.tgz'), appdest);
-  for (const rel of ['server/index.js', 'www/index.html', 'www/app.js', 'config/privilege']) {
+  for (const rel of ['server/index.js', 'server/extras.js', 'www/index.html', 'www/app.js', 'www/ui.mjs', 'www/extras-view.mjs', 'config/privilege']) {
     assert.ok(fs.existsSync(path.join(appdest, rel)), `app.tgz 里缺少 ${rel}`);
   }
   const dataDir = path.join(TMP, 'data', 'fpk');

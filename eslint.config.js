@@ -55,15 +55,19 @@ module.exports = defineConfig(
     rules: sharedRules,
   },
 
-  // 前端脚本:浏览器环境,普通 <script>(非模块)
+  // 前端入口与功能模块使用浏览器原生 ES Modules。
   {
-    files: ['app/www/**/*.js'],
+    files: ['app/www/**/*.{js,mjs}'],
     languageOptions: {
       ecmaVersion: 'latest',
-      sourceType: 'script',
+      sourceType: 'module',
       globals: { ...globals.browser },
     },
     plugins: { '@stylistic': stylistic },
     rules: sharedRules,
+  },
+  {
+    files: ['app/www/theme-init.js'],
+    languageOptions: { sourceType: 'script' },
   },
 );

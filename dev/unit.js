@@ -771,6 +771,8 @@ test('硬链接：正片/字幕识别与规划', () => {
       assert.strictEqual(importedExtra.hardlink.done, false, '导入应重置硬链接完成标记');
       assert.strictEqual(importedExtra.hardlink.retryAt, 0, '导入应重置硬链接重试时间');
       assert.strictEqual(importedExtra.hardlink.dest, '/media/${name}', '硬链接目标应保留');
+      engine.extras.updateExtraHardlink(importedExtra.id, { season: 3 });
+      assert.strictEqual(engine.state().extras[0].hardlink.season, 3, '补番服务应读写导入后替换的数据对象');
 
       assert.throws(() => engine.importConfig({ qb: { baseUrl: 'ftp://bad.local' } }), /http/);
       assert.strictEqual(store.data.qb.baseUrl, 'http://new.local:9000', '非法地址不应改动现有配置');
