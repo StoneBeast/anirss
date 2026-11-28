@@ -6,6 +6,12 @@
    * ============================================================ */
 
   const ICONS = {
+    'nav-overview': '<rect x="3" y="4" width="18" height="16" rx="4" fill="currentColor" fill-opacity=".12"/><path d="M3 9h18M8 13v3m4-4v4m4-2v2"/>',
+    'nav-subs': '<rect x="3" y="5" width="18" height="14" rx="4" fill="currentColor" fill-opacity=".12"/><path d="M8 3h8m-6 5.5 5 3.5-5 3.5z"/>',
+    'nav-extras': '<path d="M3 8a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z" fill="currentColor" fill-opacity=".12"/><path d="M12 9v6m-3-3h6"/>',
+    'nav-downloads': '<path d="M4 14h4l1.5 2h5l1.5-2h4v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" fill="currentColor" fill-opacity=".12"/><path d="M12 3v9m-3-3 3 3 3-3"/>',
+    'nav-library': '<path d="M3 8a3 3 0 0 1 3-3h3l2 2h7a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z" fill="currentColor" fill-opacity=".12"/><path d="M7 12h10m-10 3h6"/>',
+    'nav-connection': '<rect x="3" y="4" width="18" height="16" rx="4" fill="currentColor" fill-opacity=".12"/><path d="M7 9h5m4 0h1m-10 6h1m4 0h5"/><circle cx="14" cy="9" r="1.5"/><circle cx="10" cy="15" r="1.5"/>',
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     rss: '<path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.6" fill="currentColor" stroke="none"/>',
     download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
@@ -22,6 +28,7 @@
     external: '<path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/>',
     'arrow-up-right': '<path d="M7 17 17 7"/><path d="M8 7h9v9"/>',
     'chevron-right': '<path d="m9 6 6 6-6 6"/>',
+    'chevron-down': '<path d="m6 9 6 6 6-6"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
@@ -57,6 +64,7 @@
 
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   const API = (() => {
     const p = location.pathname.endsWith('/') ? location.pathname : `${location.pathname}/`;
@@ -355,12 +363,20 @@
     el.innerHTML = `
       <div class="toast-icon">${icon(iconName, 12)}</div>
       <div class="toast-text">${title ? `<strong>${esc(title)}</strong>` : ''}<span>${esc(message)}</span></div>
-      <button class="toast-close" type="button" data-action="toast-close">${icon('x', 11)}</button>`;
+      <button class="toast-close" type="button" data-action="toast-close" aria-label="关闭通知">${icon('x', 11)}</button>`;
     root.appendChild(el);
-    setTimeout(() => {
-      el.classList.add('out');
-      setTimeout(() => el.remove(), 200);
-    }, 4600);
+    setTimeout(() => dismissToast(el), 4600);
+  }
+
+  function dismissToast(el) {
+    if (!el?.isConnected || el.classList.contains('out')) return;
+    if (reducedMotion.matches) {
+      el.remove();
+      return;
+    }
+    el.classList.add('out');
+    const duration = Number.parseFloat(getComputedStyle(el).getPropertyValue('--motion-exit'));
+    setTimeout(() => el.remove(), duration + 30);
   }
 
   async function copyText(text) {
@@ -506,7 +522,12 @@
   }
 
   function renderChrome() {
-    $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.nav === S.view));
+    $$('#nav a').forEach((a) => {
+      const active = a.dataset.nav === S.view;
+      a.classList.toggle('active', active);
+      if (active) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
     const crumb = $('#crumb');
     if (crumb) crumb.textContent = ROUTES[S.view] || '总览';
 
@@ -628,7 +649,8 @@
         focused = { id: el.id, start, end };
       }
     });
-    return { fields, focused, template: S.view === 'extras' && !!S.subTemplate, templateState: S.view === 'extras' && S.subTemplate ? { id: S.subTemplate.id, values: { ...S.subTemplate.values } } : null };
+    const disclosures = $$('details[id][open]', root).map((el) => el.id);
+    return { fields, focused, disclosures, template: S.view === 'extras' && !!S.subTemplate, templateState: S.view === 'extras' && S.subTemplate ? { id: S.subTemplate.id, values: { ...S.subTemplate.values } } : null };
   }
 
   /** 用路径预设 id + 变量值恢复 S.subTemplate（跨页草稿用） */
@@ -647,6 +669,10 @@
 
   function restoreViewDraft(root, draft) {
     const byId = new Map($$('[id]', root).map((el) => [el.id, el]));
+    for (const id of draft.disclosures || []) {
+      const el = byId.get(id);
+      if (el) el.open = true;
+    }
     draft.fields.forEach((item) => {
       const el = byId.get(item.id);
       if (!el) return;
@@ -753,6 +779,7 @@
       if (node.getAttribute(attr.name) !== attr.value) node.setAttribute(attr.name, attr.value);
     }
     for (const attr of Array.from(node.attributes)) {
+      if (node.tagName === 'DETAILS' && attr.name === 'open') continue;
       if (!src.hasAttribute(attr.name)) node.removeAttribute(attr.name);
     }
     patchChildren(node, src);
@@ -830,14 +857,30 @@
     const el = $('#view');
     if (!el) return;
     // 同页重绘时暂存；跨页返回时用离开前保存的草稿
-    const stored = S.drafts[S.view] || null;
-    const draft = stored || (S.viewDirty && S.renderedView === S.view ? captureViewDraft(el) : null);
+    const changedPage = S.renderedView !== S.view;
+    const draft = changedPage ? S.drafts[S.view] : (S.viewDirty ? captureViewDraft(el) : null);
+    const openSections = !changedPage && !draft && S.view === 'extras' ? $$('details[id][open]', el).map((section) => section.id) : [];
+    el.dataset.view = S.view;
     el.innerHTML = viewHTML(S.view);
+    if (changedPage && el.animate && !reducedMotion.matches) {
+      const style = getComputedStyle(el);
+      const duration = Number.parseFloat(style.getPropertyValue('--motion-ui'));
+      const easing = style.getPropertyValue('--ease-out').trim();
+      Array.from(el.children).slice(0, 5).forEach((section, i) => {
+        section.animate([{ opacity: 0.5, transform: 'translateY(8px)' }, { opacity: 1, transform: 'translateY(0)' }], {
+          duration, easing, delay: Math.min(i * 24, 72), fill: 'backwards',
+        });
+      });
+    }
     if (S.view === 'extras' && !draft) initExtrasForm();
     if (draft) {
       restoreViewDraft(el, draft);
       S.viewDirty = true;
       if (S.view === 'connection') S.formDirty = true;
+    }
+    for (const id of openSections) {
+      const section = document.getElementById(id);
+      if (section) section.open = true;
     }
     if (S.view === 'extras') updateHardlinkPreview();
     S.renderedView = S.view;
@@ -846,6 +889,7 @@
   function renderFatal() {
     const el = $('#view');
     if (!el) return;
+    delete el.dataset.view;
     el.innerHTML = `
       <div class="empty" style="margin-top:60px">
         <div class="empty-icon">${icon('alert', 30)}</div>
@@ -1335,85 +1379,70 @@
   function hardlinkRowHTML(x) {
     const h = x.hardlink;
     if (!h || !h.dest) return '';
-    const target = h.destResolved || h.dest;
-    if (h.enabled === false) {
-      return `<div class="extra-hl"><span class="extra-hl-path" title="${esc(target)}">${esc(target)}</span><span class="extra-hl-state">本次不硬链接（已关闭）</span></div>`;
-    }
-    const progress = Number(x.qb && x.qb.progress) || 0;
     let cls = '';
-    let state = '';
-    if (h.done) {
-      const bits = [];
-      if (h.videos || h.subs) {
-        const counts = [];
-        if (h.videos) counts.push(`${h.videos} 集`);
-        if (h.subs) counts.push(`${h.subs} 字幕`);
-        bits.push(counts.join(' + '));
-        if (h.linked) bits.push(`新增 ${h.linked}`);
-        if (h.existed) bits.push(`已有 ${h.existed}`);
-      } else {
-        if (h.linked) bits.push(`已链接 ${h.linked} 个文件`);
-        if (h.existed) bits.push(`${h.existed} 个已存在`);
-      }
-      if (h.rename) bits.push('已重命名');
-      if (h.conflicts) bits.push(`${h.conflicts} 个被占用`);
-      if (h.skipped) bits.push(`跳过 ${h.skipped} 个非正片`);
-      if (h.error) {
-        cls = 'warn';
-        state = h.error;
-      } else {
-        cls = h.linked || h.existed ? 'ok' : '';
-        state = bits.join('，') || '没有需要链接的文件';
-      }
+    let state = '下载后自动入库';
+    if (h.enabled === false) {
+      state = '入库已关闭';
     } else if (h.error && !/等待下载完成/.test(h.error)) {
-      cls = 'bad';
+      cls = h.done ? 'warn' : 'bad';
       state = h.error;
-    } else if (progress >= 0.9999) {
-      state = '下载完成，准备硬链接…';
-    } else {
-      state = `等待下载完成${progress > 0 ? `（${Math.round(progress * 100)}%）` : ''}`;
+    } else if (h.done) {
+      const counts = [h.videos && `${h.videos} 集`, h.subs && `${h.subs} 份字幕`].filter(Boolean);
+      const available = h.linked || h.existed;
+      cls = h.conflicts ? 'warn' : (available ? 'ok' : '');
+      state = available ? `已入库${counts.length ? ` · ${counts.join(' / ')}` : ''}` : '没有新增入库文件';
+      if (h.conflicts) state += ` · ${h.conflicts} 个同名冲突`;
+    } else if (Number(x.qb && x.qb.progress) >= 0.9999) {
+      state = '等待入库';
     }
-    return `<div class="extra-hl ${cls}">${icon('link', 12)}<span class="extra-hl-path" title="${esc(target)}">${esc(target)}</span><span class="extra-hl-state">${esc(state)}</span></div>`;
+    return `<div class="extra-hl ${cls}">${icon('link', 14)}<span class="extra-hl-state">${esc(state)}</span></div>`;
   }
 
   function extraCardHTML(x) {
     const qb = x.qb;
-    const pct = qb ? Math.max(0, Math.min(100, Math.round((qb.progress || 0) * 100))) : 0;
-    const meta = [];
-    meta.push(`<span class="chip">${icon('folder')}${esc(x.savePath || 'qB 默认路径')}</span>`);
-    if (x.category) meta.push(`<span class="chip purple">${esc(x.category)}</span>`);
-    if (x.tags) meta.push(`<span class="chip">${icon('tag')}${esc(x.tags)}</span>`);
-    meta.push(`<span class="chip">${icon('clock')}${relTime(x.createdAt)}</span>`);
-    if (qb) {
-      meta.push(`<span class="chip">${fmtBytes(qb.size || 0)}${qb.dlspeed ? ` · ${fmtBytes(qb.dlspeed)}/s` : ''}</span>`);
-      if (qb.state && /download/i.test(qb.state)) meta.push(`<span class="chip">剩余 ${etaText(qb.eta)}</span>`);
-    }
-    if (x.subs && x.subs.length) meta.push(`<span class="chip">${icon('upload')}${x.subs.length} 个外挂字幕</span>`);
+    const progress = Number(qb?.progress) || 0;
+    const pct = Math.max(0, Math.min(progress >= 0.9999 ? 100 : 99, Math.round(progress * 100)));
+    const state = qb?.state || (x.paused ? 'pausedDL' : '');
+    const h = x.hardlink;
+    const details = [
+      ['来源', x.source === 'file' ? '种子文件' : '磁力链接'],
+      ['添加时间', relTime(x.createdAt)],
+      ['下载目录', x.savePath || 'qB 默认路径'],
+      ['入库目录', h && (h.destResolved || h.dest)],
+      ['分类', x.category],
+      ['标签', x.tags],
+      ['文件大小', qb?.size ? fmtBytes(qb.size) : ''],
+      ['预计剩余', state === 'downloading' || state === 'forcedDL' ? etaText(qb?.eta) : ''],
+    ];
+    const id = esc(x.id);
     return `
-      <article class="extra-card ${x.ok ? '' : 'failed'}" data-key="${esc(x.id)}">
-        <div class="extra-main">
-          <div class="extra-title-row">
-            <span class="extra-name" title="${esc(x.name)}">${esc(x.name)}</span>
-            <span class="badge ${x.source === 'file' ? 'blue' : 'purple'}">${x.source === 'file' ? '种子文件' : '磁力链接'}</span>
-            ${x.paused ? '<span class="badge gray">暂停</span>' : ''}
-            ${x.episodeLabel ? `<span class="chip accent">${esc(x.episodeLabel)}</span>` : ''}
-            ${x.ok
-    ? `<span class="badge ${qbStateBadge(qb && qb.state)}">${esc(qbStateText(qb && qb.state))}</span>`
-    : '<span class="badge red">提交失败</span>'}
-          </div>
-          <div class="extra-meta">${meta.join('')}</div>
-          ${x.ok && qb ? `<div class="progress"><span style="width:${pct}%"></span></div>` : ''}
+      <article class="extra-card ${x.ok ? '' : 'failed'}" data-key="${id}">
+        <div class="extra-title-row">
+          <h3 class="extra-name">${esc(x.name)}</h3>
+          ${x.episodeLabel ? `<span class="extra-episode">${esc(x.episodeLabel)}</span>` : ''}
+          <span class="badge ${x.ok ? qbStateBadge(state) : 'red'}">${x.ok ? esc(qbStateText(state)) : '提交失败'}</span>
+        </div>
+        <div class="extra-status">
+          ${x.ok && qb && pct < 100 ? `<div class="extra-progress"><div class="progress" role="progressbar" aria-label="下载进度" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div><span>${pct}%${qb.dlspeed ? ` · ${fmtSpeed(qb.dlspeed)}` : ''}</span></div>` : ''}
           ${hardlinkRowHTML(x)}
           ${x.error ? `<div class="sub-error">${icon('alert', 12)} ${esc(x.error)}</div>` : ''}
         </div>
-        <div class="extra-actions">
-          <button class="icon-btn" type="button" data-action="extra-subs" data-id="${esc(x.id)}" title="字幕管理（上传/下载字幕，自动跟随硬链接）">${icon('upload')}</button>
-          ${x.hardlink && x.hardlink.dest ? `<button class="icon-btn" type="button" data-action="extra-hardlink-edit" data-id="${esc(x.id)}" title="修改硬链接">${icon('edit')}</button>` : ''}
-          ${x.hardlink && x.hardlink.dest && x.hardlink.enabled !== false ? `<button class="icon-btn" type="button" data-action="extra-hardlink" data-id="${esc(x.id)}" title="立即硬链接">${icon('link')}</button>` : ''}
-          <button class="icon-btn" type="button" data-action="extra-copy" data-id="${esc(x.id)}" title="复制磁力链接">${icon('copy')}</button>
-          <button class="icon-btn" type="button" data-action="extra-delete" data-id="${esc(x.id)}" title="只删除记录">${icon('trash')}</button>
-          <button class="icon-btn danger" type="button" data-action="extra-delete-torrent" data-id="${esc(x.id)}" title="删除 qB 任务（含文件）">${icon('x')}</button>
-        </div>
+        <details class="extra-disclosure extra-card-details" id="extra-details-${id}">
+          <summary aria-label="${esc(x.name)}的详情和操作">详情 ${icon('chevron-down', 14)}</summary>
+          <div class="extra-disclosure-body">
+            <dl class="extra-facts">${details.filter(([, value]) => value).map(([label, value]) => `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>
+            <div class="extra-actions">
+              <button class="btn btn-sm" type="button" data-action="extra-subs" data-id="${id}">${icon('upload', 14)}字幕管理${x.subs?.length ? ` <span class="chip">${x.subs.length} 个外挂字幕</span>` : ''}</button>
+              ${x.ok ? `<button class="btn btn-sm" type="button" data-action="extra-hardlink-edit" data-id="${id}">${icon('edit', 14)}入库设置</button>` : ''}
+              ${h?.dest && h.enabled !== false ? `<button class="btn btn-sm" type="button" data-action="extra-hardlink" data-id="${id}">${icon('link', 14)}立即入库</button>` : ''}
+              ${x.magnet || x.hash ? `<button class="btn btn-sm" type="button" data-action="extra-copy" data-id="${id}">${icon('copy', 14)}复制磁力链接</button>` : ''}
+            </div>
+            <div class="extra-actions extra-danger-actions">
+              <button class="btn btn-sm btn-ghost" type="button" data-action="extra-delete" data-id="${id}">${icon('trash', 14)}仅删除记录</button>
+              ${x.ok ? `<button class="btn btn-sm btn-danger" type="button" data-action="extra-delete-torrent" data-id="${id}">${icon('x', 14)}删除任务和文件</button>` : ''}
+            </div>
+          </div>
+        </details>
       </article>`;
   }
 
@@ -1421,37 +1450,51 @@
     const d = S.data;
     const extras = d.extras || [];
     const qbOk = !!(d.qb && d.qb.lastTest && d.qb.lastTest.ok);
-    const hp = hardlinkPreviewState();
     const hl = d.hardlink || {
       mode: 'season', videoExts: '', subExts: '', excludeDirs: '', excludeTags: '',
       includeFonts: false, stripRoot: false, renamePattern: '${name} - ${episode2}', defaultDest: '',
     };
+    return `
+      <header class="extra-heading">
+        <div class="page-head extra-page-head">
+          <div class="extra-page-heading">
+            <span class="extra-mark" aria-hidden="true">${icon('nav-extras', 28)}</span>
+            <h1 class="page-title">补番</h1>
+          </div>
+          <div class="page-actions">
+            <button class="btn" data-action="extras-status">${icon('refresh')}刷新状态</button>
+          </div>
+        </div>
+        ${qbOk ? '' : `<div class="notice amber">${icon('alert')}<div>还没有成功连接 qBittorrent，<a href="#/connection">前往连接设置</a>。</div></div>`}
+      </header>
+
+      <div class="extra-controls">${extraControlsHTML(d.paths, hl)}</div>
+
+      <section class="extra-records" aria-labelledby="extra-records-title">
+        <div class="section-head">
+          <h2 id="extra-records-title">补番记录</h2>
+          <span class="extra-count">${extras.length} 条</span>
+        </div>
+        ${extras.length
+    ? `<div class="extra-list">${extras.map(extraCardHTML).join('')}</div>`
+    : `<div class="extra-empty">${icon('nav-downloads', 28)}<p>还没有补番记录</p></div>`}
+      </section>`;
+  }
+
+  function extraControlsHTML(paths, hl) {
+    const hp = hardlinkPreviewState();
     const presetOptions = [
       '<option value="">自定义 / qBittorrent 默认路径</option>',
-      ...d.paths.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} — ${esc(p.path)}</option>`),
+      ...paths.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} — ${esc(p.path)}</option>`),
     ].join('');
-    // 硬链接目标直接复用「站点与路径」的预设
     const hardlinkPresetOptions = [
       '<option value="">自定义 / 不选预设</option>',
-      ...d.paths.map((p) => `<option value="${esc(p.id)}" data-path="${esc(p.path)}">${esc(p.name)} — ${esc(p.path)}</option>`),
+      ...paths.map((p) => `<option value="${esc(p.id)}" data-path="${esc(p.path)}">${esc(p.name)} — ${esc(p.path)}</option>`),
     ].join('');
     return `
-      <div class="page-head">
-        <div>
-          <h1 class="page-title">补番</h1>
-        </div>
-        <div class="page-actions">
-          <button class="btn" data-action="extras-status">${icon('refresh')}刷新状态</button>
-        </div>
-      </div>
-
-      ${qbOk ? '' : `<div class="notice amber">${icon('alert')}<div>还没有成功连接 qBittorrent，补番任务可能提交失败；先到「连接设置」测试连接。</div></div>`}
-
-      <div class="card">
+      <div class="card extra-compose">
         <div class="card-head">
-          <div>
-            <div class="card-title">新增补番</div>
-          </div>
+          <h2 class="card-title">新增补番</h2>
         </div>
         <div class="card-body">
           <form id="extra-form" class="form" autocomplete="off">
@@ -1460,7 +1503,7 @@
                 <label class="field-label" for="x-magnets">磁力链接</label>
                 <textarea class="input mono" id="x-magnets" rows="3" placeholder="magnet:?xt=urn:btih:…&#10;每行一条，可留空只用种子文件" spellcheck="false"></textarea>
               </div>
-              <div class="field full">
+              <div class="field">
                 <label class="field-label" for="x-files">种子文件 <span class="tip">可多选，单个 ≤ 8MB</span></label>
                 <input class="input" id="x-files" type="file" accept=".torrent,application/x-bittorrent" multiple>
               </div>
@@ -1469,70 +1512,79 @@
                 <input class="input" id="f-name" placeholder="留空自动用磁力或种子文件名" maxlength="120">
                 <div class="field-hint" id="f-name-hint"></div>
               </div>
-              <div class="field">
-                <label class="field-label" for="x-category">分类</label>
-                <input class="input" id="x-category" placeholder="例如 anime">
-              </div>
-              <div class="field">
-                <label class="field-label" for="x-tags">标签</label>
-                <input class="input" id="x-tags" placeholder="逗号分隔">
-              </div>
-              <div class="field">
-                <label class="field-label" for="f-path-preset">存储路径预设</label>
-                <select class="select" id="f-path-preset">${presetOptions}</select>
-              </div>
-              <div class="field full">
-                <label class="field-label" for="f-savepath">最终保存路径</label>
-                <input class="input mono" id="f-savepath" placeholder="留空 = qBittorrent 默认路径" spellcheck="false">
-                <div class="field-hint">与追番共用预设；支持 <code>${'${name}'}</code>（名称）与数字变量。</div>
-              </div>
-              <div class="field full">
-                <label class="field-label" for="h-dest">硬链接到 <span class="tip">可选 · 下载完成后自动执行</span></label>
-                <div class="inline-row">
-                  <select class="select" id="h-path-preset" aria-label="硬链接目录预设">${hardlinkPresetOptions}</select>
-                  <input class="input mono" id="h-dest" placeholder="留空 = 不硬链接；可用 ${'${name}'} / ${'${season}'}，例如 /pathb/动画/${'${name}'}/Season ${'${season}'}" spellcheck="false">
-                  <input class="input h-season" id="h-season" type="number" min="0" max="999" step="1" value="1" aria-label="季" title="季">
-                </div>
-                <div class="field-hint">目标可直接选「站点与路径」里的预设；变量 <code>${'${name}'}</code>（名称）、<code>${'${season}'}</code>（季），预设里的数字变量依次按名称、季填充。</div>
-                <div class="field-hint${hp.bad ? ' bad' : ''}" id="h-dest-preview">${esc(hp.text)}</div>
-                <div class="field-hint">
-                  <button class="btn btn-ghost btn-sm" type="button" data-action="hardlink-probe">${icon('search', 12)}检查目录权限</button>
-                </div>
-                <div class="field full">
-                  <label class="check"><input type="checkbox" id="h-enabled" checked><span><strong>下载完成后硬链接</strong><span class="check-hint">这次不想硬链接就取消；目标模板会保留，之后可再打开</span></span></label>
-                </div>
-                <div class="field full">
-                  <label class="check"><input type="checkbox" id="h-rename"><span><strong>按集数重命名</strong><span class="check-hint">视频改成「名称 - 目标集数」；配对的字幕始终跟随视频的最终文件名，与剧集一一对应</span></span></label>
-                </div>
-                <div class="field">
-                  <label class="field-label" for="h-voffset">集数偏移（整体）</label>
-                  <input class="input" id="h-voffset" type="number" min="-999" max="999" step="1" value="0">
-                  <div class="field-hint">下载是 01–12、目标是 13–24 → 填 +12；视频和字幕一起平移</div>
-                </div>
-                <div class="field">
-                  <label class="field-label" for="h-soffset">字幕偏移 <span class="tip">可选 · 一般留空</span></label>
-                  <input class="input" id="h-soffset" type="number" min="-999" max="999" step="1" value="" placeholder="留空 = 跟随整体偏移">
-                  <div class="field-hint">只有字幕文件自己的编号和视频不一致时才填（例：字幕已按 13–24 命名 → 填 0）</div>
-                </div>
-              </div>
             </div>
-            ${pathTemplatePanelHTML()}
-            <label class="check"><input type="checkbox" id="x-paused"><span><strong>添加后暂停</strong><span class="check-hint">先不开始下载，之后可在 qBittorrent 里手动开始</span></span></label>
-            <div class="btn-row">
-              <button class="btn btn-primary" type="submit">${icon('magnet')}添加到 qBittorrent</button>
+            <details class="extra-disclosure" id="extra-download-options">
+              <summary><span class="extra-summary-label">${icon('nav-downloads', 17)}下载选项</span>${icon('chevron-down', 16)}</summary>
+              <div class="extra-disclosure-body form-grid">
+                <div class="field">
+                  <label class="field-label" for="f-path-preset">存储路径预设</label>
+                  <select class="select" id="f-path-preset">${presetOptions}</select>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="f-savepath">保存路径</label>
+                  <input class="input mono" id="f-savepath" placeholder="留空 = qBittorrent 默认路径" spellcheck="false">
+                  <div class="field-hint">支持 <code>${'${name}'}</code> 自动填入补番名称</div>
+                </div>
+                ${pathTemplatePanelHTML()}
+                <div class="field">
+                  <label class="field-label" for="x-category">分类</label>
+                  <input class="input" id="x-category" placeholder="例如 anime">
+                </div>
+                <div class="field">
+                  <label class="field-label" for="x-tags">标签</label>
+                  <input class="input" id="x-tags" placeholder="逗号分隔">
+                </div>
+                <label class="check full"><input type="checkbox" id="x-paused"><span>添加后暂停</span></label>
+              </div>
+            </details>
+            <details class="extra-disclosure" id="extra-library-options">
+              <summary><span class="extra-summary-label">${icon('nav-library', 17)}<span>媒体库入库 <small id="extra-library-state">${esc(extraLibraryState(hl.defaultDest))}</small></span></span>${icon('chevron-down', 16)}</summary>
+              <div class="extra-disclosure-body form-grid">
+                <div class="field full">
+                  <label class="check"><input type="checkbox" id="h-enabled" checked><span>下载完成后自动入库</span></label>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="h-path-preset">入库路径预设</label>
+                  <select class="select" id="h-path-preset">${hardlinkPresetOptions}</select>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="h-season">季号</label>
+                  <input class="input" id="h-season" type="number" min="0" max="999" step="1" value="1">
+                </div>
+                <div class="field full">
+                  <label class="field-label" for="h-dest">入库目录</label>
+                  <input class="input mono" id="h-dest" placeholder="例如 /media/动画/${'${name}'}/Season ${'${season}'}" spellcheck="false">
+                  <div class="field-hint${hp.bad ? ' bad' : ''}" id="h-dest-preview">${esc(hp.text)}</div>
+                  <button class="btn btn-ghost btn-sm extra-probe" type="button" data-action="hardlink-probe">${icon('search', 12)}检查目录权限</button>
+                </div>
+                <details class="extra-disclosure full" id="extra-episode-options" ${hl.mode === 'mirror' ? 'hidden' : ''}>
+                  <summary>集数与命名 ${icon('chevron-down', 16)}</summary>
+                  <fieldset class="extra-disclosure-body form-grid" ${hl.mode === 'mirror' ? 'disabled' : ''}>
+                    <label class="check full"><input type="checkbox" id="h-rename"><span>按集数重命名</span></label>
+                    <div class="field">
+                      <label class="field-label" for="h-voffset">集数偏移</label>
+                      <input class="input" id="h-voffset" type="number" min="-999" max="999" step="1" value="0">
+                      <div class="field-hint">下载是 01–12、目标是 13–24 → 填 +12；视频和字幕一起平移</div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="h-soffset">字幕偏移</label>
+                      <input class="input" id="h-soffset" type="number" min="-999" max="999" step="1" value="" placeholder="留空 = 跟随整体偏移">
+                      <div class="field-hint">字幕已用目标集数时，填 0</div>
+                    </div>
+                  </fieldset>
+                </details>
+              </div>
+            </details>
+            <div class="btn-row extra-submit">
+              <button class="btn btn-primary" type="submit">${icon('plus')}添加下载</button>
             </div>
           </form>
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-head">
-          <div>
-            <div class="card-title">硬链接设置</div>
-            <div class="card-sub">补番下载完成后自动把匹配的文件硬链接到目标目录，源文件保留继续做种</div>
-          </div>
-        </div>
-        <div class="card-body">
+      <details class="card extra-disclosure extra-global-settings" id="extra-global-settings">
+        <summary><span class="extra-summary-label">${icon('nav-connection', 17)}全局入库设置</span>${icon('chevron-down', 16)}</summary>
+        <div class="extra-disclosure-body">
           <form id="hardlink-form" class="form" autocomplete="off">
             <div class="form-grid">
               <div class="field">
@@ -1580,19 +1632,11 @@
               </div>
             </div>
             <div class="btn-row">
-              <button class="btn" type="submit">${icon('check')}保存硬链接设置</button>
+              <button class="btn" type="submit">${icon('check')}保存全局入库设置</button>
             </div>
           </form>
         </div>
-      </div>
-
-      <div class="section-head">
-        <h2>补番记录</h2>
-        <span class="small faint">共 ${extras.length} 条</span>
-      </div>
-      ${extras.length
-    ? `<div class="extra-list">${extras.map(extraCardHTML).join('')}</div>`
-    : '<div class="qb-empty">还没有补番记录。粘贴磁力链接或选择 .torrent 文件即可单次下载。</div>'}`;
+      </details>`;
   }
 
   /** 前端版硬链接目标渲染：${name} / ${season}，以及预设里的数字变量（1=名称，其余=季） */
@@ -1644,7 +1688,7 @@
     }
     if (!dest) {
       return {
-        text: '留空 = 下载完成后不硬链接；可以选择上面的路径预设，或用 ${name}/${season} 拼模板。',
+        text: '填写目录或选择预设。支持 ${name} 和 ${season}。',
         bad: false,
       };
     }
@@ -1657,7 +1701,15 @@
     };
   }
 
+  function extraLibraryState(defaultDest) {
+    const dest = $('#h-dest');
+    const enabled = $('#h-enabled');
+    return enabled?.checked === false || !(dest ? dest.value.trim() : defaultDest) ? '未启用' : '下载后自动入库';
+  }
+
   function updateHardlinkPreview() {
+    const label = $('#extra-library-state');
+    if (label) label.textContent = extraLibraryState();
     const el = $('#h-dest-preview');
     if (!el) return;
     const state = hardlinkPreviewState();
@@ -1784,6 +1836,7 @@
       try {
         savePath = extraSavePathFromForm(form);
       } catch (e) {
+        $('#extra-download-options', form).open = true;
         toast(e.message, 'warn');
         return;
       }
@@ -1888,8 +1941,17 @@
       };
       try {
         const r = await api('hardlink', { method: 'PUT', body: payload });
-        if (r && r.hardlink) S.data.hardlink = r.hardlink;
-        toast('硬链接设置已保存', 'success');
+        if (r && r.hardlink) {
+          const target = $('#h-dest');
+          if (target && target.value.trim() === (S.data.hardlink?.defaultDest || '')) {
+            target.value = r.hardlink.defaultDest;
+            const select = $('#h-path-preset');
+            if (select) select.value = S.data.paths.find((p) => p.path === target.value)?.id || '';
+            updateHardlinkPreview();
+          }
+          S.data.hardlink = r.hardlink;
+        }
+        toast('全局入库设置已保存', 'success');
         await refresh();
       } catch (e) {
         toast(e.message, 'error');
@@ -2037,8 +2099,9 @@
     if (!x) return;
     const h = x.hardlink || {};
     const values = await askForm({
-      title: '修改硬链接',
-      message: '留空目标 = 不再硬链接这条补番；已经链接过去的文件不会被删除。支持 ${name} / ${season} 变量。',
+      title: '入库设置',
+      message: '目标目录支持 ${name} 和 ${season}。留空可关闭入库，已入库的文件会保留。',
+      advanced: S.data.hardlink?.mode === 'mirror' ? '' : '集数与命名',
       fields: [
         {
           key: 'dest',
@@ -2056,31 +2119,32 @@
         },
         {
           key: 'enabled',
-          label: '启用硬链接',
+          label: '下载完成后自动入库',
           type: 'check',
           value: h.enabled !== false,
-          hint: '关闭后不再自动巡检，但目标模板会保留',
         },
         {
           key: 'rename',
           label: '按集数重命名',
           type: 'check',
           value: !!h.rename,
-          hint: '视频改成「名称 - 目标集数」；配对的字幕始终跟随视频的最终文件名（文件名完全不同的字幕也会按集数配对并改名）',
+          advanced: true,
         },
         {
           key: 'offset',
-          label: '集数偏移（整体）',
+          label: '集数偏移',
           type: 'number',
           value: String(h.offset || 0),
-          hint: '例如下载 01–12、目标是 13–24，填 12；视频和字幕一起平移',
+          hint: '01–12 对应 13–24 时，填 12',
+          advanced: true,
         },
         {
           key: 'subOffset',
-          label: '字幕偏移（可选）',
+          label: '字幕偏移',
           type: 'number',
           value: h.subOffset == null ? '' : String(h.subOffset),
-          hint: '留空 = 跟随整体偏移；只有字幕文件自己的编号和视频不一致时才填（字幕已按 13–24 命名 → 填 0）',
+          hint: '留空跟随集数偏移。字幕已用目标集数时，填 0',
+          advanced: true,
         },
       ],
       confirmText: '保存',
@@ -2088,7 +2152,7 @@
     if (!values || typeof values !== 'object') return;
     const season = Math.max(0, Math.trunc(Number(values.season) || 0));
     const clampOffset = (v) => Math.max(-999, Math.min(999, Math.trunc(Number(v) || 0)));
-    const subOffsetRaw = String(values.subOffset == null ? '' : values.subOffset).trim();
+    const subOffsetRaw = String(values.subOffset ?? h.subOffset ?? '').trim();
     try {
       await api(`extras/${encodeURIComponent(id)}/hardlink`, {
         method: 'PUT',
@@ -2096,12 +2160,12 @@
           dest: values.dest,
           season,
           enabled: !!values.enabled,
-          rename: !!values.rename,
-          offset: clampOffset(values.offset),
+          rename: !!(values.rename ?? h.rename),
+          offset: clampOffset(values.offset ?? h.offset),
           subOffset: subOffsetRaw === '' ? null : clampOffset(subOffsetRaw),
         },
       });
-      toast('硬链接设置已更新', 'success');
+      toast('入库设置已更新', 'success');
       await refresh();
     } catch (e) {
       toast(e.message, 'error');
@@ -2398,7 +2462,7 @@
     if (!bangumiId || !subgroupId) return;
     // 不丢占位记录：关搜索弹窗只清 DOM，表单弹窗复用同一条占位记录，
     // 手机上按返回仍是先关表单，而不是直接退出
-    closeModal({ skipGuard: true });
+    closeModal({ skipGuard: true, animate: false });
     openSubModal(null, {
       reuseGuard: true,
       prefill: {
@@ -2975,12 +3039,15 @@
         await loadQbStatus(true);
         break;
 
-      case 'toggle-theme':
-        applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light', true);
+      case 'toggle-theme': {
+        const update = () => applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light', true);
+        if (document.startViewTransition && !reducedMotion.matches) document.startViewTransition(update);
+        else update();
         break;
+      }
 
       case 'toast-close':
-        el.closest('.toast')?.remove();
+        dismissToast(el.closest('.toast'));
         break;
 
       case 'copy': {
@@ -3460,6 +3527,7 @@
   function openModal(html, type, opts) {
     const root = $('#modal-root');
     if (!root) return;
+    const isRefresh = !!root.firstElementChild && S.modal?.type === type;
     // 同一 tick 里「关旧弹窗、开新弹窗」的替换（如搜索结果选字幕组进表单）：
     // 旧弹窗的占位记录还压在历史里，复用它，不再压新记录。
     // 否则先 close 再 open 会触发一次排队的 history.back()，它的目标在调用瞬间
@@ -3473,17 +3541,51 @@
     S.modalEdited = false;
     S.modalOpenedAt = Date.now();
     root.innerHTML = html;
+    const layer = root.firstElementChild;
+    if (isRefresh) layer?.classList.add('layer-present');
     syncLock();
     setTimeout(() => {
+      if (root.firstElementChild !== layer) return;
       const focus = root.querySelector('input:not([type=checkbox]), textarea');
       if (focus) focus.focus();
     }, 40);
   }
 
+  function removeLayer(root, animate) {
+    const layer = root?.firstElementChild;
+    if (!layer) return false;
+    if (!animate || reducedMotion.matches || !layer.animate) {
+      layer.remove();
+      return true;
+    }
+    const panel = layer.firstElementChild;
+    const current = getComputedStyle(layer);
+    const duration = Number.parseFloat(current.getPropertyValue('--motion-exit'));
+    const opacity = current.opacity;
+    const transform = panel ? getComputedStyle(panel).transform : 'none';
+    layer.inert = true;
+    layer.setAttribute('aria-hidden', 'true');
+    // 视觉退出保留原滚动位置，弹层状态和历史记录在同一帧结束。
+    layer.removeAttribute('data-backdrop');
+    $$('[id], [data-action], [data-field]', layer).forEach((element) => {
+      element.removeAttribute('id');
+      element.removeAttribute('data-action');
+      element.removeAttribute('data-field');
+    });
+    layer.classList.add('layer-leaving');
+    $('#motion-root').append(layer);
+    const options = { duration, easing: 'ease-in', fill: 'forwards' };
+    const fade = layer.animate([{ opacity }, { opacity: 0 }], options);
+    if (panel) {
+      const exit = panel.classList.contains('drawer') ? 'translateX(36px)' : 'translateY(9px) scale(0.985)';
+      panel.animate([{ transform }, { transform: exit }], options);
+    }
+    fade.finished.then(() => layer.remove(), () => layer.remove());
+    return true;
+  }
+
   function closeModal(opts) {
-    const root = $('#modal-root');
-    const wasOpen = !!(root && root.children.length);
-    if (root) root.innerHTML = '';
+    const wasOpen = removeLayer($('#modal-root'), opts?.animate !== false);
     S.modal = null;
     S.modalEdited = false;
     S.subTemplate = null;
@@ -3497,9 +3599,7 @@
   }
 
   function closeDrawer(opts) {
-    const root = $('#drawer-root');
-    const wasOpen = !!(root && root.children.length);
-    if (root) root.innerHTML = '';
+    const wasOpen = removeLayer($('#drawer-root'), opts?.animate !== false);
     S.drawer = null;
     syncLock();
     if (wasOpen && !(opts && opts.skipGuard)) dropLayerGuard();
@@ -3510,8 +3610,8 @@
       S.confirmResolve(false);
       S.confirmResolve = null;
     }
-    closeModal();
-    closeDrawer();
+    closeModal({ animate: false });
+    closeDrawer({ animate: false });
   }
 
   function askConfirm(opts) {
@@ -3583,7 +3683,13 @@
               ${type === 'number' ? 'min="-999" max="999" step="1"' : ''} spellcheck="false">
             ${f.hint ? `<div class="field-hint">${esc(f.hint)}</div>` : ''}
           </div>`;
-      }).join('');
+      });
+      const mainFields = html.filter((_, i) => !fields[i].advanced).join('');
+      const advancedFields = opts.advanced ? `
+        <details class="extra-disclosure">
+          <summary>${esc(opts.advanced)} ${icon('chevron-down', 16)}</summary>
+          <div class="extra-disclosure-body form">${html.filter((_, i) => fields[i].advanced).join('')}</div>
+        </details>` : '';
       root.innerHTML = `
         <div class="modal-backdrop" data-backdrop="modal">
           <div class="modal sm" role="dialog" aria-modal="true">
@@ -3594,7 +3700,7 @@
               </div>
               <button class="icon-btn modal-close" type="button" data-action="ask-no">${icon('x')}</button>
             </div>
-            <div class="modal-body"><div class="form" id="ask-form">${html}</div></div>
+            <div class="modal-body"><div class="form" id="ask-form">${mainFields}${advancedFields}</div></div>
             <div class="modal-foot">
               <button class="btn" type="button" data-action="ask-no">取消</button>
               <button class="btn btn-primary" type="button" data-action="ask-yes">${esc(opts.confirmText || '保存')}</button>
@@ -4280,13 +4386,13 @@
     const current = S.drawer;
     try {
       const data = await api(`subs/${encodeURIComponent(current.id)}/preview`, { method: 'POST', body: {} });
-      if (!S.drawer || S.drawer.id !== current.id) return;
+      if (S.drawer !== current) return;
       S.drawer.data = data;
       S.drawer.sub = data.sub || S.drawer.sub;
       S.drawer.loading = false;
       S.drawer.error = '';
     } catch (e) {
-      if (!S.drawer || S.drawer.id !== current.id) return;
+      if (S.drawer !== current) return;
       S.drawer.loading = false;
       S.drawer.error = e.message;
     }
@@ -4310,7 +4416,8 @@
     const meta = sub.meta || {};
     const items = data ? data.items || [] : [];
     // 刷新后条目列表重建，把滚动位置带回原处（单条下载后不打断浏览）
-    const prevBody = root.querySelector('.drawer-body');
+    const drawer = root.querySelector('.drawer');
+    const prevBody = drawer?.querySelector('.drawer-body');
     const bodyScroll = prevBody ? prevBody.scrollTop : 0;
     const stats = data ? `
       <div class="drawer-stats">
@@ -4320,9 +4427,7 @@
         <div class="drawer-stat"><strong>${data.items.filter((x) => x.downloaded).length}</strong><small>已提交</small></div>
       </div>` : '';
 
-    root.innerHTML = `
-      <div class="drawer-backdrop" data-backdrop="drawer">
-        <aside class="drawer" role="dialog" aria-modal="true">
+    const content = `
           <div class="drawer-head">
             <div class="drawer-title-row">
               ${meta.hasCover ? `<img class="drawer-cover" src="${API}cover/${encodeURIComponent(sub.id)}" alt="" onerror="this.remove()">` : ''}
@@ -4352,9 +4457,9 @@
             <button class="btn" data-action="drawer-refresh">${icon('eye')}重新预览</button>
             <span class="spacer"></span>
             <span class="small faint">预览不产生下载</span>
-          </div>
-        </aside>
-      </div>`;
+          </div>`;
+    if (drawer) drawer.innerHTML = content;
+    else root.innerHTML = `<div class="drawer-backdrop" data-backdrop="drawer"><aside class="drawer" role="dialog" aria-modal="true">${content}</aside></div>`;
     const body = root.querySelector('.drawer-body');
     if (body && bodyScroll) body.scrollTop = bodyScroll;
     syncLock();
@@ -4628,6 +4733,7 @@
     if (t.closest('#conn-form')) S.formDirty = true;
     if (t.closest('#proxy-form')) S.formDirty = true;
     if (t.id === 'f-base') updateSubUrlPreview();
+    if (t.id === 'h-enabled') updateHardlinkPreview();
     if (t.id === 'h-path-preset') {
       const opt = t.selectedOptions ? t.selectedOptions[0] : null;
       const input = $('#h-dest');
@@ -4646,6 +4752,13 @@
       }
     }
   });
+
+  document.addEventListener('invalid', (e) => {
+    if (e.target.form?.id !== 'extra-form') return;
+    for (let section = e.target.closest('details'); section; section = section.parentElement.closest('details')) {
+      if (!section.hidden) section.open = true;
+    }
+  }, true);
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;

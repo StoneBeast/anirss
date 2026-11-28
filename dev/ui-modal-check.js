@@ -176,9 +176,24 @@ async function main() {
   // 6. 填过内容点「取消」→ 关
   geo = await openModal();
   await typeIntoInput(geo.input);
-  await evaluate('document.querySelector(\'#modal-root form#path-form [data-action="close-modal"]\').click()');
-  await sleep(150);
+  const closing = await evaluate(`(() => {
+    document.querySelector('#modal-root form#path-form [data-action="close-modal"]').click();
+    const leaving = document.querySelector('#motion-root .layer-leaving');
+    return !!leaving?.inert && !leaving.querySelector('[id], [data-action]') && !document.body.classList.contains('locked');
+  })()`);
+  check('退场动画期间弹窗不可交互，页面已解锁', closing);
+  await sleep(250);
   check('填过内容点「取消」→ 关闭', !(await modalOpen()));
+  check('退场完成后移除动画节点', await evaluate('!document.querySelector(\'#motion-root > *\')'));
+
+  await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await openModal();
+  const instantClose = await evaluate(`(() => {
+    document.querySelector('#modal-root form#path-form [data-action="close-modal"]').click();
+    return !document.querySelector('#modal-root > *, #motion-root > *');
+  })()`);
+  check('减少动态效果时即时关闭弹窗', instantClose);
+  await send('Emulation.setEmulatedMedia', { features: [] });
 
   // 收尾：把输入留下的 toast 清掉
   await evaluate('document.querySelectorAll(\'.toast\').forEach((t) => t.remove())');

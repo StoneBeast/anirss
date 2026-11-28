@@ -2787,7 +2787,7 @@ class Engine {
     const x = this.data.extras.find((e) => e.id === id);
     if (!x) throw httpError(404, '补番记录不存在', 'EXTRA_NOT_FOUND');
     if (!x.hardlink || !x.hardlink.dest) throw badRequest('这条补番没有设置硬链接目录', 'HARDLINK_NO_DEST');
-    if (x.hardlink.enabled === false) throw badRequest('这条补番已关闭硬链接（可在铅笔按钮里重新打开）', 'HARDLINK_DISABLED');
+    if (x.hardlink.enabled === false) throw badRequest('这条补番已关闭入库，可在「详情 → 入库设置」中开启', 'HARDLINK_DISABLED');
     if (this.hardlinkBusy.has(x.id)) throw httpError(409, '硬链接正在执行，请稍等', 'HARDLINK_BUSY');
     const result = await this.linkExtraRecord(x);
     if (!result) throw httpError(409, x.hardlink.error || '硬链接未执行', 'HARDLINK_FAILED');

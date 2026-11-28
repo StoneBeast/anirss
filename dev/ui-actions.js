@@ -270,6 +270,8 @@ async function main() {
   await sleep(900);
   const extrasTitle = await ev("document.querySelector('.page-title')?.textContent || ''");
   ok('补番页面可打开', extrasTitle.trim() === '补番', extrasTitle);
+  ok('补番默认收起可选设置和卡片详情', await ev("!document.querySelector('#view details[open]')"));
+  await click('#extra-library-options > summary');
 
   // 8a. 硬链接：设置保存 + 下载完成后自动生成 + 手动重跑
   ok('补番页有硬链接设置', await ev("!!document.querySelector('#hardlink-form')") === true);
@@ -287,6 +289,7 @@ async function main() {
   })()`);
   ok('路径预设变量按名称/季预览', /动画/.test(presetPreview) && /Season 1/.test(presetPreview), presetPreview);
   const frierenId = ((await state()).extras || []).find((x) => x.hash === 'e2'.padEnd(40, '1')).id;
+  await click('#extra-global-settings > summary');
   await setValue('#hl-video-exts', 'mkv,mp4');
   await setValue('#hl-sub-exts', 'ass,srt');
   await setValue('#hl-rename-pattern', '${name} - E${episode2}');
@@ -313,6 +316,7 @@ async function main() {
   ok('CDs 未被链接', !fs.existsSync(path.join(seasonDir, '01.flac')));
   ok('源文件保留继续做种', fs.existsSync(sourceFile) && fs.statSync(sourceFile).nlink === 2,
     String(fs.existsSync(sourceFile) ? fs.statSync(sourceFile).nlink : 'missing'));
+  await click(`#extra-details-${frierenId} > summary`);
   await click(`[data-action="extra-hardlink"][data-id="${frierenId}"]`, 1600);
   const hlToast = await ev("Array.from(document.querySelectorAll('.toast')).map((el) => el.innerText).join(' | ')");
   ok('可手动重跑硬链接', /硬链接完成/.test(hlToast) && /已存在/.test(hlToast), hlToast.replace(/\n/g, ' '));
@@ -339,6 +343,7 @@ async function main() {
   await setValue('#x-magnets', `magnet:?xt=urn:btih:${extraHash}&dn=UI+Extra+Test`);
   await setValue('#f-name', 'UI 补番测试');
   await setValue('#h-dest', uiHlDest);
+  await click('#extra-episode-options > summary');
   await ev("(() => { const el = document.querySelector('#h-rename'); el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()");
   await setValue('#h-voffset', '12');
   await setValue('#h-soffset', '0');
@@ -353,7 +358,9 @@ async function main() {
   JSON.stringify(extraRec && extraRec.hardlink));
 
   // 8b. 硬链接开关：关闭后卡片标为「本次不硬链接」，再打开恢复
+  await click(`#extra-details-${extraRec.id} > summary`);
   await click(`[data-action="extra-hardlink-edit"][data-id="${extraRec.id}"]`, 500);
+  await click('#ask-form summary');
   const askChecks = await ev("document.querySelectorAll('#ask-form input[type=checkbox]').length");
   ok('硬链接弹窗包含开关与重命名', askChecks === 2, String(askChecks));
   await ev("(() => { const el = document.querySelector('#ask-field-2'); el.checked = false; return true; })()");
@@ -364,7 +371,7 @@ async function main() {
     const card = document.querySelector('[data-action="extra-hardlink-edit"][data-id="${extraRec.id}"]')?.closest('.extra-card');
     return card ? card.querySelector('.extra-hl')?.innerText || '' : '';
   })()`);
-  ok('关闭后卡片标注本次不硬链接', /本次不硬链接/.test(offRow), offRow);
+  ok('关闭后卡片标注入库已关闭', /入库已关闭/.test(offRow), offRow);
   await click(`[data-action="extra-hardlink-edit"][data-id="${extraRec.id}"]`, 500);
   await ev("(() => { const el = document.querySelector('#ask-field-2'); el.checked = true; return true; })()");
   await click('[data-action="ask-yes"]', 900);
@@ -379,6 +386,7 @@ async function main() {
   ok('提交成功后补番表单清空', clearedAfterSubmit.magnets === '' && clearedAfterSubmit.name === '', JSON.stringify(clearedAfterSubmit));
 
   // 8c. 回归（v1.7.1）：重绘 #view 不能清掉正在填的内容
+  await click('#extra-download-options > summary');
   await setValue('#x-magnets', `magnet:?xt=urn:btih:${'d'.repeat(40)}&dn=draft-keep`);
   await setValue('#f-name', '草稿保留测试');
   await setValue('#x-category', 'anime');
@@ -443,9 +451,10 @@ async function main() {
     magnets: document.querySelector('#x-magnets') ? document.querySelector('#x-magnets').value : '',
     name: document.querySelector('#f-name') ? document.querySelector('#f-name').value : '',
     category: document.querySelector('#x-category') ? document.querySelector('#x-category').value : '',
+    optionsOpen: document.querySelector('#extra-download-options')?.open,
   }))()`);
   ok('切页回来补番草稿保留', keptDraft.magnets.includes('d'.repeat(40)) && keptDraft.name === '切页草稿补番'
-    && keptDraft.category === 'draft-cat', JSON.stringify(keptDraft));
+    && keptDraft.category === 'draft-cat' && keptDraft.optionsOpen, JSON.stringify(keptDraft));
 
   await ev(`(() => {
     ['#x-magnets', '#f-name', '#x-category', '#x-tags'].forEach((sel) => {
@@ -508,7 +517,7 @@ async function main() {
   await ev('(() => { const el = document.querySelector(\'#x-magnets\'); if (el) { el.value=\'\'; el.dispatchEvent(new Event(\'input\',{bubbles:true})); } return true; })()');
 
   await click('[data-action="extras-status"]', 1200);
-  ok('补番状态可刷新', await ev("!document.querySelector('.page-title') || true"));
+  ok('补番状态刷新后保留展开的详情', await ev(`document.querySelector('#extra-details-${extraRec.id}')?.open === true`));
   await click(`[data-action="extra-delete"][data-id="${extraRec.id}"]`, 400);
   await click('[data-action="confirm-yes"]', 900);
   st = await state();
